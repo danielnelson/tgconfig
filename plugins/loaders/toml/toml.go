@@ -10,6 +10,8 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/influxdata/tgconfig/plugins/parsers"
+
 	"github.com/BurntSushi/toml"
 
 	telegraf "github.com/influxdata/tgconfig"
@@ -20,7 +22,7 @@ const (
 	Name = "toml"
 )
 
-func New(config *Config) (telegraf.ConfigLoader, error) {
+func New(config *Config) (telegraf.Loader, error) {
 	return &Toml{*config}, nil
 }
 
@@ -39,10 +41,10 @@ type telegrafConfig struct {
 	Agent   telegraf.AgentConfig
 	Inputs  map[string][]toml.Primitive
 	Outputs map[string][]toml.Primitive
-	Configs map[string][]toml.Primitive
+	Loaders map[string][]toml.Primitive
 }
 
-func (c *Toml) Load(plugins *telegraf.Plugins) (*telegraf.Config, error) {
+func (c *Toml) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.Config, error) {
 	var (
 		conf telegrafConfig
 		md   toml.MetaData
@@ -50,21 +52,20 @@ func (c *Toml) Load(plugins *telegraf.Plugins) (*telegraf.Config, error) {
 	)
 
 	if md, err = toml.DecodeFile(c.Config.Path, &conf); err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
-	// fmt.Printf("Agent Interval: %d\n", conf.Agent.Interval)
 
-	ri, err := loadInputs(md, plugins, conf)
+	ri, err := LoadInputs(md, plugins, conf.Inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	ro, err := loadOutputs(md, plugins, conf)
+	ro, err := LoadOutputs(md, plugins, conf.Outputs)
 	if err != nil {
 		return nil, err
 	}
 
-	rc, err := loadConfigs(md, plugins, conf)
+	rl, err := LoadLoaders(md, plugins, conf.Loaders)
 	if err != nil {
 		return nil, err
 	}
@@ -82,7 +83,7 @@ func (c *Toml) Load(plugins *telegraf.Plugins) (*telegraf.Config, error) {
 		Agent:   conf.Agent,
 		Inputs:  ri,
 		Outputs: ro,
-		Configs: rc,
+		Loaders: rl,
 	}
 
 	return config, nil
@@ -109,7 +110,7 @@ func loadPlugin(md toml.MetaData, p toml.Primitive, factory interface{}) interfa
 	return plugin
 }
 
-func loadInputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig) (
+func LoadInputs(md toml.MetaData, plugins *telegraf.Plugins, inputs map[string][]toml.Primitive) (
 	[]*telegraf.InputPlugin,
 	error,
 ) {
@@ -120,7 +121,7 @@ func loadInputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig
 		return nil, err
 	}
 
-	for name, primitive := range conf.Inputs {
+	for name, primitive := range inputs {
 		loader, ok := loaders[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown plugin: %s", name)
@@ -130,10 +131,38 @@ func loadInputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig
 			// Parse Input level configuration
 			inputConfig := &telegraf.InputConfig{}
 			if err := md.PrimitiveDecode(p, inputConfig); err != nil {
-				log.Fatal(err)
+				return nil, err
 			}
 
 			plugin := loadPlugin(md, p, loader)
+
+			// Parser injection is done for backwards compatibility, new
+			// plugins should add the ParserConfig to the plugins config and
+			// call NewParser themselves.
+			//
+			// Not sure if this is actually possible though.  I think we will
+			// at the very least have to introduce a new toml syntax.
+			//
+			// Ideally, the Config could just have a Parser interface and it
+			// would be filled before calling New:
+			//
+			// type Config struct {
+			//     Parser telegraf.ParserConfig
+			// }
+			//
+			// func New(config *Config) (telegraf.Input, error) {
+			//     // maybe move this?
+			//     parser := model.NewParser(config.Parser)
+			//     return &Example{parser: parser}
+			// }
+			if plugin, ok := plugin.(telegraf.ParserInput); ok {
+				parser, err := LoadParser(md, p)
+				if err != nil {
+					return nil, err
+				}
+
+				plugin.SetParser(parser)
+			}
 
 			switch plugin := plugin.(type) {
 			case telegraf.Input:
@@ -148,7 +177,7 @@ func loadInputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig
 	return ri, nil
 }
 
-func loadOutputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig) (
+func LoadOutputs(md toml.MetaData, plugins *telegraf.Plugins, outputs map[string][]toml.Primitive) (
 	[]*telegraf.OutputPlugin,
 	error,
 ) {
@@ -159,7 +188,7 @@ func loadOutputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfi
 		return nil, err
 	}
 
-	for name, primitive := range conf.Outputs {
+	for name, primitive := range outputs {
 		loader, ok := loaders[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown plugin: %s", name)
@@ -169,7 +198,7 @@ func loadOutputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfi
 			// Parse Output level configuration
 			outputConfig := &telegraf.OutputConfig{}
 			if err := md.PrimitiveDecode(p, outputConfig); err != nil {
-				log.Fatal(err)
+				return nil, err
 			}
 
 			plugin := loadPlugin(md, p, loader)
@@ -187,18 +216,50 @@ func loadOutputs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfi
 	return ro, nil
 }
 
-func loadConfigs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfig) (
-	[]*telegraf.ConfigLoaderPlugin,
+func LoadParser(md toml.MetaData, p toml.Primitive) (
+	telegraf.Parser,
 	error,
 ) {
-	cp := make([]*telegraf.ConfigLoaderPlugin, 0)
-
-	loaders, err := models.Check(plugins.Configs)
+	parsers, err := models.Check(parsers.Parsers)
 	if err != nil {
 		return nil, err
 	}
 
-	for name, primitive := range conf.Configs {
+	config := &models.ParserConfig{}
+	if err := md.PrimitiveDecode(p, config); err != nil {
+		return nil, err
+	}
+
+	if config.DataFormat == "" {
+		config.DataFormat = "influx"
+	}
+
+	parser, ok := parsers[config.DataFormat]
+	if !ok {
+		return nil, fmt.Errorf("unknown parser: %q", config.DataFormat)
+	}
+
+	plugin := loadPlugin(md, p, parser)
+
+	if plugin, ok := plugin.(telegraf.Parser); ok {
+		return plugin, nil
+	}
+
+	return nil, fmt.Errorf("unexpected plugin type: %s", config.DataFormat)
+}
+
+func LoadLoaders(md toml.MetaData, plugins *telegraf.Plugins, configs map[string][]toml.Primitive) (
+	[]*telegraf.LoaderPlugin,
+	error,
+) {
+	cp := make([]*telegraf.LoaderPlugin, 0)
+
+	loaders, err := models.Check(plugins.Loaders)
+	if err != nil {
+		return nil, err
+	}
+
+	for name, primitive := range configs {
 		loader, ok := loaders[name]
 		if !ok {
 			return nil, fmt.Errorf("unknown plugin: %s", name)
@@ -208,8 +269,8 @@ func loadConfigs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfi
 			plugin := loadPlugin(md, p, loader)
 
 			switch plugin := plugin.(type) {
-			case telegraf.ConfigLoader:
-				clp := &telegraf.ConfigLoaderPlugin{ConfigLoader: plugin}
+			case telegraf.Loader:
+				clp := &telegraf.LoaderPlugin{Loader: plugin}
 				cp = append(cp, clp)
 			default:
 				return nil, fmt.Errorf("unexpected plugin type: %s", name)
@@ -220,24 +281,46 @@ func loadConfigs(md toml.MetaData, plugins *telegraf.Plugins, conf telegrafConfi
 	return cp, nil
 }
 
+func (c *Toml) Name() string {
+	return Name
+}
+
 func (c *Toml) Monitor(ctx context.Context) error {
-	// todo: debounce signals
-	// todo: don't miss signals, need to run this all the time, need stop?
 	signals := make(chan os.Signal)
-	signal.Notify(signals, os.Interrupt, syscall.SIGHUP)
+	signal.Notify(signals, syscall.SIGHUP)
+	defer signal.Stop(signals)
+
 	select {
-	case sig := <-signals:
-		if sig == os.Interrupt {
-			return fmt.Errorf("interrupted")
-		}
-		if sig == syscall.SIGHUP {
-			// reload
-			return nil
-		}
+	case <-signals:
+		return telegraf.ReloadConfig
 	case <-ctx.Done():
-		return nil
+		return ctx.Err()
 	}
-	return nil
+}
+
+func (c *Toml) MonitorC(ctx context.Context) <-chan error {
+	out := make(chan error)
+
+	signals := make(chan os.Signal)
+	signal.Notify(signals, syscall.SIGHUP)
+
+	go func() {
+		select {
+		case sig := <-signals:
+			if sig == syscall.SIGHUP {
+				out <- telegraf.ReloadConfig
+				break
+			}
+		case <-ctx.Done():
+			out <- ctx.Err()
+			break
+		}
+
+		signal.Stop(signals)
+		close(out)
+	}()
+
+	return out
 }
 
 // Debugging

@@ -1,13 +1,18 @@
 package agent
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"sync"
+	"time"
 
 	telegraf "github.com/influxdata/tgconfig"
 	"github.com/influxdata/tgconfig/models"
-	"github.com/influxdata/tgconfig/plugins/configs"
-	"github.com/influxdata/tgconfig/plugins/configs/toml"
 	"github.com/influxdata/tgconfig/plugins/inputs"
+	"github.com/influxdata/tgconfig/plugins/loaders"
+	"github.com/influxdata/tgconfig/plugins/loaders/toml"
 	"github.com/influxdata/tgconfig/plugins/outputs"
 )
 
@@ -35,7 +40,7 @@ func (a *Agent) Run() error {
 		configfile = a.flags.Args[0]
 	}
 
-	primaryConfigLoader, err := toml.New(&toml.Config{Path: configfile})
+	primaryLoader, err := toml.New(&toml.Config{Path: configfile})
 	if err != nil {
 		return err
 	}
@@ -48,88 +53,189 @@ func (a *Agent) Run() error {
 	// all the plugins.
 
 	plugins := &telegraf.Plugins{
-		Configs: configs.Configs,
+		Loaders: loaders.Loaders,
 		Inputs:  inputs.Inputs,
 		Outputs: outputs.Outputs,
 	}
 
-	// deal with multiple monitors
-	// ctx := context.Background()
+	ctx := context.Background()
 	for {
 		var ris = make([]*models.RunningInput, 0)
 		var ros = make([]*models.RunningOutput, 0)
-		var rcs = make([]*models.RunningConfig, 0)
+		var rls = make([]*models.RunningLoader, 0)
 
-		conf, err := primaryConfigLoader.Load(plugins)
+		conf, err := primaryLoader.Load(ctx, plugins)
 		if err != nil {
 			return err
 		}
 
-		rc := &models.RunningConfig{
-			&telegraf.ConfigLoaderPlugin{primaryConfigLoader}}
-		fmt.Println(rc.String())
-		rcs = append(rcs, rc)
+		rl := &models.RunningLoader{
+			LoaderPlugin: &telegraf.LoaderPlugin{Loader: primaryLoader}}
+		fmt.Println(rl.String())
+		rls = append(rls, rl)
 
 		// Debugging
 		for _, input := range conf.Inputs {
-			ri := &models.RunningInput{input}
+			ri := &models.RunningInput{InputPlugin: input}
 			fmt.Println(ri.String())
 			ris = append(ris, ri)
 		}
 
 		for _, output := range conf.Outputs {
-			ro := &models.RunningOutput{output}
+			ro := &models.RunningOutput{OutputPlugin: output}
 			fmt.Println(ro.String())
 			ros = append(ros, ro)
 		}
 
-		for _, loader := range conf.Configs {
-			conf, err := loader.Load(plugins)
+		for _, loader := range conf.Loaders {
+			conf, err := loader.Load(ctx, plugins)
 			if err != nil {
 				return err
 			}
 
-			rc := &models.RunningConfig{loader}
+			rc := &models.RunningLoader{LoaderPlugin: loader}
 			fmt.Println(rc.String())
-			rcs = append(rcs, rc)
+			rls = append(rls, rl)
 
 			// Debugging
 			for _, input := range conf.Inputs {
-				ri := &models.RunningInput{input}
+				ri := &models.RunningInput{InputPlugin: input}
 				fmt.Println(ri.String())
 				ris = append(ris, ri)
 			}
 
 			// Debugging
 			for _, output := range conf.Outputs {
-				ro := &models.RunningOutput{output}
+				ro := &models.RunningOutput{OutputPlugin: output}
 				fmt.Println(ro.String())
 				ros = append(ros, ro)
 			}
 		}
 
-		// ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		// defer cancel()
+		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
 
-		// err = primaryConfigLoader.Monitor(ctx)
-		// if err != nil {
-		// 	fmt.Println(err)
-		// 	break
-		// }
+		sigctx, sigcancel := context.WithCancel(ctx)
+		defer sigcancel()
+		go func(ctx context.Context) {
+			signals := make(chan os.Signal)
+			signal.Notify(signals, os.Interrupt)
+			select {
+			case sig := <-signals:
+				if sig == os.Interrupt {
+					fmt.Println("interrupt: agent")
+					cancel()
+					break
+				}
+			case <-ctx.Done():
+				cancel()
+				break
+			}
+			signal.Stop(signals)
+		}(sigctx)
 
-		// if ctx.Err() == context.DeadlineExceeded {
-		// 	fmt.Println("finished timed run")
-		// 	break
-		// }
+		// Maybe we should begin monitoring before loading (except for
+		// primary).
+		Monitor(ctx, rls)
 
-		// fmt.Println("reloading")
+		if ctx.Err() == context.Canceled {
+			fmt.Println("cancelled: agent")
+			break
+		}
+		if ctx.Err() == context.DeadlineExceeded {
+			fmt.Println("finished timed run: agent")
+			break
+		}
 
-		break
+		sigcancel()
+
+		fmt.Println("reloading")
 	}
 
-	// run stuff
-
 	fmt.Println("Run -- finished")
+	return nil
+}
+
+func Monitor(ctx context.Context, rcs []*models.RunningLoader) error {
+	var wg sync.WaitGroup
+	var cancels []context.CancelFunc
+	var once sync.Once
+
+	done := make(chan struct{}, len(rcs))
+
+	for _, rc := range rcs {
+		ctx, cancel := context.WithCancel(ctx)
+		cancels = append(cancels, cancel)
+
+		wg.Add(1)
+		go func(rc *models.RunningLoader) {
+			defer wg.Done()
+			err := rc.Monitor(ctx)
+
+			if ctx.Err() == context.Canceled {
+				fmt.Printf("cancelled: %s\n", rc.Name())
+			} else if ctx.Err() == context.DeadlineExceeded {
+				fmt.Printf("timeout: %s\n", rc.Name())
+			} else if err == telegraf.ReloadConfig {
+				fmt.Printf("%s: %s\n", err, rc.Name())
+			} else if err != nil {
+				fmt.Println(err)
+			}
+			once.Do(func() { close(done) })
+		}(rc)
+	}
+
+	select {
+	case <-done:
+	}
+
+	for _, cancel := range cancels {
+		cancel()
+	}
+
+	wg.Wait()
+	return nil
+}
+
+func MonitorC(ctx context.Context, rcs []*models.RunningLoader) error {
+	var wg sync.WaitGroup
+	var cancels []context.CancelFunc
+
+	// ugg, what if someone sends more than one message?
+	// do i need a semaphore?
+	done := make(chan error, len(rcs))
+
+	for _, rc := range rcs {
+		wg.Add(1)
+		ctx, cancel := context.WithCancel(ctx)
+		cancels = append(cancels, cancel)
+		go func(rc *models.RunningLoader) {
+			defer wg.Done()
+			select {
+			case err := <-rc.MonitorC(ctx):
+				if ctx.Err() == context.Canceled {
+					fmt.Printf("cancelled: %s\n", rc.Name())
+				} else if ctx.Err() == context.DeadlineExceeded {
+					fmt.Printf("timeout: %s\n", rc.Name())
+				} else if err == telegraf.ReloadConfig {
+					fmt.Printf("%s: %s\n", err, rc.Name())
+				} else if err != nil {
+					fmt.Println(err)
+				}
+				done <- err
+				return
+			}
+		}(rc)
+	}
+
+	select {
+	case <-done:
+		for _, c := range cancels {
+			c()
+		}
+	}
+
+	wg.Wait()
 	return nil
 }
 

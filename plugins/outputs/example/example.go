@@ -21,11 +21,6 @@ type Example struct {
 	Config Config
 }
 
-// NewExampleOutput creates an ExampleOutput from an ExampleOutputConfig.
-func New(config *Config) telegraf.Output {
-	return &Example{*config}
-}
-
 // Connect connects the output.
 func (p *Example) Connect() error {
 	return nil
@@ -36,4 +31,9 @@ func (p *Example) String() string {
 		"Output: " + Name,
 		fmt.Sprintf("  value:%s", p.Config.Value),
 	}, "\n")
+}
+
+// NewExampleOutput creates an ExampleOutput from an ExampleOutputConfig.
+func New(config *Config) telegraf.Output {
+	return &Example{*config}
 }

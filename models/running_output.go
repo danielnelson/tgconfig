@@ -7,6 +7,7 @@ import (
 	telegraf "github.com/influxdata/tgconfig"
 )
 
+// Existing: models/running_output.RunningOutput
 type RunningOutput struct {
 	*telegraf.OutputPlugin
 }

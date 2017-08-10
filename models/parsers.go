@@ -1,6 +1,10 @@
-package telegraf
+package models
 
-import "fmt"
+import (
+	"fmt"
+
+	telegraf "github.com/influxdata/tgconfig"
+)
 
 // ParserConfig contains global Parser configuration.
 type ParserConfig struct {
@@ -9,4 +13,9 @@ type ParserConfig struct {
 
 func (p *ParserConfig) String() string {
 	return fmt.Sprintf("  parser:data_format:%s", p.DataFormat)
+}
+
+func NewParser() (telegraf.Parser, error) {
+	// use reflection with parsers.Parsers to construct
+	return nil, fmt.Errorf("not implemented")
 }

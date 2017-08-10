@@ -7,6 +7,7 @@ import (
 	"github.com/influxdata/tgconfig"
 )
 
+// Existing: models/running_input.RunningInput
 type RunningInput struct {
 	*telegraf.InputPlugin
 }
