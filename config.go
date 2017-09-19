@@ -32,6 +32,7 @@ type AgentConfig struct {
 //   - Breaks the product that a Config plugin must produce into two parts.
 type InputConfig struct {
 	FilterConfig
+	ParserConfig
 }
 
 func (c *InputConfig) String() string {
@@ -50,28 +51,26 @@ func (c *OutputConfig) String() string {
 }
 
 // InputPlugin packages the global settings with the Input instance.
-// internal/models/running_input.InputPlugin
 type InputPlugin struct {
 	Input
 	Config *InputConfig
 }
 
 // InputPlugin packages the global settings with the Output instance.
-// internal/models/running_output.OutputPlugin
 type OutputPlugin struct {
 	Output
 	Config *OutputConfig
 }
 
 // LoaderPlugin exists for symmetry with InputPlugin/OutputPlugin.  If a
-// shared option was introduced for LoaderPlugin it could be stored here.
+// LoaderConfig was introduced it would be stored here.
 type LoaderPlugin struct {
 	Loader
 }
 
 // Config is the top level configuration struct.
 //
-// Config plugins return this.
+// Loader plugins build this struct.
 type Config struct {
 	Agent   AgentConfig
 	Inputs  []*InputPlugin
@@ -79,9 +78,9 @@ type Config struct {
 	Loaders []*LoaderPlugin
 }
 
-// Plugins holds a set of available plugins.  This provides a layer of
+// PluginRegistry holds the set of available plugins.  This provides a layer of
 // indirection so that you can define a custom set of plugins.
-type Plugins struct {
+type PluginRegistry struct {
 	Loaders map[string]interface{}
 	Inputs  map[string]interface{}
 	Outputs map[string]interface{}

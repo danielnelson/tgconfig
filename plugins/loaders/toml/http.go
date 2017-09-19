@@ -1,4 +1,4 @@
-package http
+package toml
 
 import (
 	"context"
@@ -6,17 +6,14 @@ import (
 	"net/http"
 	"net/url"
 
-	"github.com/BurntSushi/toml"
-
 	telegraf "github.com/influxdata/tgconfig"
-	tomlplugin "github.com/influxdata/tgconfig/plugins/loaders/toml"
 )
 
 const (
-	Name = "http"
+	HTTPName = "http"
 )
 
-type Config struct {
+type HTTPConfig struct {
 	Origin string
 }
 
@@ -25,7 +22,7 @@ type HTTP struct {
 	client *http.Client
 }
 
-func New(config *Config) (telegraf.Loader, error) {
+func NewHTTP(config *HTTPConfig) (telegraf.Loader, error) {
 	origin, err := url.Parse(config.Origin)
 	if err != nil {
 		return nil, err
@@ -45,14 +42,10 @@ func New(config *Config) (telegraf.Loader, error) {
 }
 
 func (c *HTTP) Name() string {
-	return Name
+	return HTTPName
 }
 
-type telegrafConfig struct {
-	Inputs map[string][]toml.Primitive
-}
-
-func (c *HTTP) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.Config, error) {
+func (c *HTTP) Load(ctx context.Context, registry *telegraf.PluginRegistry) (*telegraf.Config, error) {
 	url := *c.origin
 	url.Path = "/config"
 	req, err := http.NewRequest("GET", url.String(), http.NoBody)
@@ -66,18 +59,8 @@ func (c *HTTP) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.C
 	}
 	defer resp.Body.Close()
 
-	var md toml.MetaData
-	conf := telegrafConfig{}
-	if md, err = toml.DecodeReader(resp.Body, &conf); err != nil {
-		return nil, err
-	}
-
-	ri, err := tomlplugin.LoadInputs(md, plugins, conf.Inputs)
-	if err != nil {
-		return nil, err
-	}
-
-	return &telegraf.Config{Inputs: ri}, nil
+	parser := NewParser(registry)
+	return parser.Parse(resp.Body)
 }
 
 func (c *HTTP) URLWithPath(path string) *url.URL {
@@ -102,15 +85,13 @@ func (c *HTTP) Monitor(ctx context.Context) error {
 }
 
 // MonitorC is an example of using a long poll http request for monitoring
-func (c *HTTP) MonitorC(ctx context.Context) <-chan error {
+func (c *HTTP) MonitorC(ctx context.Context) (<-chan error, error) {
 	out := make(chan error, 1)
 
 	url := c.URLWithPath("/config/poll")
 	req, err := http.NewRequest("GET", url.String(), nil)
 	if err != nil {
-		out <- err
-		close(out)
-		return out
+		return nil, err
 	}
 
 	go func() {
@@ -127,7 +108,31 @@ func (c *HTTP) MonitorC(ctx context.Context) <-chan error {
 		close(out)
 	}()
 
-	return out
+	return out, nil
+}
+
+// StartWatch establishes the watch
+func (h *HTTP) StartWatch(ctx context.Context) error {
+	// In order to avoid missing events after this function ends, the http
+	// client would need to ask for events after an event number in the
+	// WaitWatch, or use another custom method depending on the backend.
+	return nil
+}
+
+// WaitWatch blocks until the Loader should be reloaded
+func (h *HTTP) WaitWatch(ctx context.Context) error {
+	url := h.URLWithPath("/config/poll")
+	req, err := http.NewRequest("GET", url.String(), nil)
+	if err != nil {
+		return err
+	}
+	resp, err := h.client.Do(req.WithContext(ctx))
+	if err != nil {
+		return err
+	}
+	ioutil.ReadAll(resp.Body)
+	resp.Body.Close()
+	return nil
 }
 
 // Debugging

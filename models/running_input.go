@@ -7,9 +7,18 @@ import (
 	"github.com/influxdata/tgconfig"
 )
 
-// Existing: models/running_input.RunningInput
+// RunningInput ensures measurement filtering is applied correctly to all
+// Inputs and ensures Inputs are used correctly.
+//
+// Existing: internal/models/running_input.RunningInput
 type RunningInput struct {
 	*telegraf.InputPlugin
+}
+
+func NewRunningInput(
+	plugin *telegraf.InputPlugin,
+) *RunningInput {
+	return &RunningInput{plugin}
 }
 
 func (ri *RunningInput) String() string {

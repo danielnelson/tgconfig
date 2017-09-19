@@ -6,7 +6,7 @@ import (
 	telegraf "github.com/influxdata/tgconfig"
 )
 
-// ParserConfig contains global Parser configuration.
+// ParserConfig contains the global Parser configuration.
 type ParserConfig struct {
 	DataFormat string `toml:"data_format"`
 }

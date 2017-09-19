@@ -11,7 +11,8 @@ var ReloadConfig = errors.New("reload config")
 type Loader interface {
 	Name() string
 
-	Load(context.Context, *Plugins) (*Config, error)
+	// Should we remove registry?  Would need to move it to the New function.
+	Load(context.Context, *PluginRegistry) (*Config, error)
 
 	Monitor(context.Context) error
 
@@ -21,5 +22,17 @@ type Loader interface {
 	// Do not return until listening?  What if can't establish connection?
 	//
 	// Is it okay to miss signals?
-	MonitorC(context.Context) <-chan error
+	//
+	// Delete, just an experiement but I prefer the plain Monitor functin.
+
+	MonitorC(context.Context) (<-chan error, error)
+
+	// Could make this a different interface that can optionally be
+	// implemented.
+
+	// StartWatch establishes the watch
+	StartWatch(context.Context) error
+
+	// WaitWatch blocks until the Loader should be reloaded
+	WaitWatch(context.Context) error
 }

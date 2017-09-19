@@ -6,8 +6,15 @@ import (
 	telegraf "github.com/influxdata/tgconfig"
 )
 
+// RunningLoader exists for symmetry with the other Running classes.
 type RunningLoader struct {
 	*telegraf.LoaderPlugin
+}
+
+func NewRunningLoader(
+	plugin *telegraf.LoaderPlugin,
+) *RunningLoader {
+	return &RunningLoader{plugin}
 }
 
 func (rc *RunningLoader) String() string {

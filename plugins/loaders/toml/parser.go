@@ -1,77 +1,59 @@
 package toml
 
 import (
-	"context"
 	"fmt"
+	"io"
 	"log"
-	"os"
-	"os/signal"
 	"reflect"
 	"strings"
-	"syscall"
 
+	"github.com/influxdata/tgconfig/models"
 	"github.com/influxdata/tgconfig/plugins/parsers"
 
 	"github.com/BurntSushi/toml"
 
 	telegraf "github.com/influxdata/tgconfig"
-	"github.com/influxdata/tgconfig/models"
 )
 
-const (
-	Name = "toml"
-)
-
-func New(config *Config) (telegraf.Loader, error) {
-	return &Toml{*config}, nil
+type parser struct {
+	md       toml.MetaData
+	registry *telegraf.PluginRegistry
 }
 
-type Toml struct {
-	Config Config
+func NewParser(registry *telegraf.PluginRegistry) *parser {
+	return &parser{registry: registry}
 }
 
-type Config struct {
-	// Path is the main config file
-	Path string
-	// Directory is an directory containing config snippets
-	Directory string
-}
+func (p *parser) Parse(reader io.Reader) (*telegraf.Config, error) {
+	var err error
+	conf := struct {
+		Agent   telegraf.AgentConfig
+		Inputs  map[string][]toml.Primitive
+		Outputs map[string][]toml.Primitive
+		Loaders map[string][]toml.Primitive
+	}{}
 
-type telegrafConfig struct {
-	Agent   telegraf.AgentConfig
-	Inputs  map[string][]toml.Primitive
-	Outputs map[string][]toml.Primitive
-	Loaders map[string][]toml.Primitive
-}
-
-func (c *Toml) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.Config, error) {
-	var (
-		conf telegrafConfig
-		md   toml.MetaData
-		err  error
-	)
-
-	if md, err = toml.DecodeFile(c.Config.Path, &conf); err != nil {
+	if p.md, err = toml.DecodeReader(reader, &conf); err != nil {
 		return nil, err
 	}
 
-	ri, err := LoadInputs(md, plugins, conf.Inputs)
+	ri, err := LoadInputs(p.md, p.registry, conf.Inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	ro, err := LoadOutputs(md, plugins, conf.Outputs)
+	ro, err := LoadOutputs(p.md, p.registry, conf.Outputs)
 	if err != nil {
 		return nil, err
 	}
 
-	rl, err := LoadLoaders(md, plugins, conf.Loaders)
+	rl, err := LoadLoaders(p.md, p.registry, conf.Loaders)
 	if err != nil {
 		return nil, err
 	}
 
-	// Only after the entire file is parsed can we report unrecognized plugins.
-	for _, item := range md.Undecoded() {
+	// Now that we have tried to parse the entire file we report unrecognized plugins.
+	for _, item := range p.md.Undecoded() {
 		// Recursive config plugin loading is not allowed.
 		if strings.HasPrefix(item.String(), "configs.") {
 			continue
@@ -85,38 +67,16 @@ func (c *Toml) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.C
 		Outputs: ro,
 		Loaders: rl,
 	}
-
 	return config, nil
 }
 
-func loadPlugin(md toml.MetaData, p toml.Primitive, factory interface{}) interface{} {
-	vfactory := reflect.ValueOf(factory)
-
-	// Get the Type of the first and only argument
-	configType := vfactory.Type().In(0)
-
-	// Create a new config struct
-	config := reflect.New(configType.Elem()).Interface()
-
-	// Parse TOML into config struct
-	if err := md.PrimitiveDecode(p, config); err != nil {
-		log.Fatal(err)
-	}
-
-	// Call factory with the config struct
-	in := make([]reflect.Value, 1)
-	in[0] = reflect.ValueOf(config)
-	plugin := vfactory.Call(in)[0].Interface()
-	return plugin
-}
-
-func LoadInputs(md toml.MetaData, plugins *telegraf.Plugins, inputs map[string][]toml.Primitive) (
+func LoadInputs(md toml.MetaData, registry *telegraf.PluginRegistry, inputs map[string][]toml.Primitive) (
 	[]*telegraf.InputPlugin,
 	error,
 ) {
 	ri := make([]*telegraf.InputPlugin, 0)
 
-	loaders, err := models.Check(plugins.Inputs)
+	loaders, err := models.Check(registry.Inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -177,13 +137,13 @@ func LoadInputs(md toml.MetaData, plugins *telegraf.Plugins, inputs map[string][
 	return ri, nil
 }
 
-func LoadOutputs(md toml.MetaData, plugins *telegraf.Plugins, outputs map[string][]toml.Primitive) (
+func LoadOutputs(md toml.MetaData, registry *telegraf.PluginRegistry, outputs map[string][]toml.Primitive) (
 	[]*telegraf.OutputPlugin,
 	error,
 ) {
 	ro := make([]*telegraf.OutputPlugin, 0)
 
-	loaders, err := models.Check(plugins.Outputs)
+	loaders, err := models.Check(registry.Outputs)
 	if err != nil {
 		return nil, err
 	}
@@ -248,13 +208,13 @@ func LoadParser(md toml.MetaData, p toml.Primitive) (
 	return nil, fmt.Errorf("unexpected plugin type: %s", config.DataFormat)
 }
 
-func LoadLoaders(md toml.MetaData, plugins *telegraf.Plugins, configs map[string][]toml.Primitive) (
+func LoadLoaders(md toml.MetaData, registry *telegraf.PluginRegistry, configs map[string][]toml.Primitive) (
 	[]*telegraf.LoaderPlugin,
 	error,
 ) {
 	cp := make([]*telegraf.LoaderPlugin, 0)
 
-	loaders, err := models.Check(plugins.Loaders)
+	loaders, err := models.Check(registry.Loaders)
 	if err != nil {
 		return nil, err
 	}
@@ -281,49 +241,23 @@ func LoadLoaders(md toml.MetaData, plugins *telegraf.Plugins, configs map[string
 	return cp, nil
 }
 
-func (c *Toml) Name() string {
-	return Name
-}
+func loadPlugin(md toml.MetaData, p toml.Primitive, factory interface{}) interface{} {
+	vfactory := reflect.ValueOf(factory)
 
-func (c *Toml) Monitor(ctx context.Context) error {
-	signals := make(chan os.Signal)
-	signal.Notify(signals, syscall.SIGHUP)
-	defer signal.Stop(signals)
+	// Get the Type of the first and only argument
+	configType := vfactory.Type().In(0)
 
-	select {
-	case <-signals:
-		return telegraf.ReloadConfig
-	case <-ctx.Done():
-		return ctx.Err()
+	// Create a new config struct
+	config := reflect.New(configType.Elem()).Interface()
+
+	// Parse TOML into config struct
+	if err := md.PrimitiveDecode(p, config); err != nil {
+		log.Fatal(err)
 	}
-}
 
-func (c *Toml) MonitorC(ctx context.Context) <-chan error {
-	out := make(chan error)
-
-	signals := make(chan os.Signal)
-	signal.Notify(signals, syscall.SIGHUP)
-
-	go func() {
-		select {
-		case sig := <-signals:
-			if sig == syscall.SIGHUP {
-				out <- telegraf.ReloadConfig
-				break
-			}
-		case <-ctx.Done():
-			out <- ctx.Err()
-			break
-		}
-
-		signal.Stop(signals)
-		close(out)
-	}()
-
-	return out
-}
-
-// Debugging
-func (c *Toml) String() string {
-	return "Config: toml"
+	// Call factory with the config struct
+	in := make([]reflect.Value, 1)
+	in[0] = reflect.ValueOf(config)
+	plugin := vfactory.Call(in)[0].Interface()
+	return plugin
 }

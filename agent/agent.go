@@ -16,11 +16,14 @@ import (
 	"github.com/influxdata/tgconfig/plugins/outputs"
 )
 
-// Agent is the primary Telegraf struct
+// Agent represents the main event loop
 type Agent struct {
 	flags *Flags
 }
 
+// Flags are the initialization options that cannot be changed
+//
+// The Agent also loads an AgentConfig which can be modified during runtime.
 type Flags struct {
 	Debug bool
 	Args  []string
@@ -40,10 +43,11 @@ func (a *Agent) Run() error {
 		configfile = a.flags.Args[0]
 	}
 
-	primaryLoader, err := toml.New(&toml.Config{Path: configfile})
+	configFileLoader, err := toml.New(&toml.Config{Path: configfile})
 	if err != nil {
 		return err
 	}
+	builtinLoader := &telegraf.LoaderPlugin{Loader: configFileLoader}
 
 	// dealing with recursion:
 	// - only local toml can contain more config plugins? yes but...
@@ -52,91 +56,113 @@ func (a *Agent) Run() error {
 	// a plugin could theoretically chain load or whatever for redirection, but it has to load
 	// all the plugins.
 
-	plugins := &telegraf.Plugins{
+	registry := &telegraf.PluginRegistry{
 		Loaders: loaders.Loaders,
 		Inputs:  inputs.Inputs,
 		Outputs: outputs.Outputs,
 	}
 
+	var wg sync.WaitGroup
+
 	ctx := context.Background()
+	ctx, sigcancel := context.WithCancel(ctx)
+
+	signals := make(chan os.Signal)
+	signal.Notify(signals, os.Interrupt)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case sig := <-signals:
+			if sig == os.Interrupt {
+				fmt.Println("interrupt: agent")
+				break
+			}
+		case <-ctx.Done():
+			break
+		}
+		signal.Stop(signals)
+		sigcancel()
+	}()
+
 	for {
 		var ris = make([]*models.RunningInput, 0)
 		var ros = make([]*models.RunningOutput, 0)
 		var rls = make([]*models.RunningLoader, 0)
 
-		conf, err := primaryLoader.Load(ctx, plugins)
+		// !! Run for maximum amount of time; this is for development reasons but
+		// maybe it should become an official option?  Although we probably
+		// should exclude config loading time.
+		ctx, cancel := context.WithTimeout(ctx, 200*time.Second)
+		defer cancel()
+
+		conf, err := builtinLoader.Load(ctx, registry)
 		if err != nil {
 			return err
 		}
 
-		rl := &models.RunningLoader{
-			LoaderPlugin: &telegraf.LoaderPlugin{Loader: primaryLoader}}
-		fmt.Println(rl.String())
+		rl := models.NewRunningLoader(builtinLoader)
 		rls = append(rls, rl)
 
-		// Debugging
-		for _, input := range conf.Inputs {
-			ri := &models.RunningInput{InputPlugin: input}
-			fmt.Println(ri.String())
-			ris = append(ris, ri)
-		}
+		fmt.Println(rl.String())
 
+		// Begin monitoring all plugins for changes, by monitoring before
+		// loading we ensure the config can never be stale.
+		//
+		// !! We don't want to continue until all are started, but the current
+		// interface doesn't allow us to know when this happened.
+		// var watcher = newMonitor()
+		var watcher = newWatcher()
+		watcher.WatchLoader(ctx, rl)
+
+		for _, input := range conf.Inputs {
+			ri := models.NewRunningInput(input)
+			ris = append(ris, ri)
+
+			// Debugging
+			fmt.Println(ri.String())
+		}
 		for _, output := range conf.Outputs {
-			ro := &models.RunningOutput{OutputPlugin: output}
-			fmt.Println(ro.String())
+			ro := models.NewRunningOutput(output)
 			ros = append(ros, ro)
+
+			// Debugging
+			fmt.Println(ro.String())
 		}
 
 		for _, loader := range conf.Loaders {
-			conf, err := loader.Load(ctx, plugins)
+			rl := models.NewRunningLoader(loader)
+			rls = append(rls, rl)
+
+			watcher.WatchLoader(ctx, rl)
+
+			conf, err := rl.Load(ctx, registry)
 			if err != nil {
 				return err
 			}
 
-			rc := &models.RunningLoader{LoaderPlugin: loader}
-			fmt.Println(rc.String())
-			rls = append(rls, rl)
+			fmt.Println(rl.String())
 
-			// Debugging
 			for _, input := range conf.Inputs {
-				ri := &models.RunningInput{InputPlugin: input}
-				fmt.Println(ri.String())
+				ri := models.NewRunningInput(input)
 				ris = append(ris, ri)
-			}
 
-			// Debugging
+				// Debugging
+				fmt.Println(ri.String())
+			}
 			for _, output := range conf.Outputs {
-				ro := &models.RunningOutput{OutputPlugin: output}
-				fmt.Println(ro.String())
+				ro := models.NewRunningOutput(output)
 				ros = append(ros, ro)
+
+				// Debugging
+				fmt.Println(ro.String())
 			}
 		}
 
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-
-		sigctx, sigcancel := context.WithCancel(ctx)
-		defer sigcancel()
-		go func(ctx context.Context) {
-			signals := make(chan os.Signal)
-			signal.Notify(signals, os.Interrupt)
-			select {
-			case sig := <-signals:
-				if sig == os.Interrupt {
-					fmt.Println("interrupt: agent")
-					cancel()
-					break
-				}
-			case <-ctx.Done():
-				cancel()
-				break
-			}
-			signal.Stop(signals)
-		}(sigctx)
-
-		// Maybe we should begin monitoring before loading (except for
-		// primary).
-		Monitor(ctx, rls)
+		// !! Start Pipeline
+		// Wait for Watch to complete
+		watcher.Wait()
+		// !! Stop Pipeline
 
 		if ctx.Err() == context.Canceled {
 			fmt.Println("cancelled: agent")
@@ -147,95 +173,173 @@ func (a *Agent) Run() error {
 			break
 		}
 
-		sigcancel()
-
 		fmt.Println("reloading")
 	}
 
 	fmt.Println("Run -- finished")
+	sigcancel()
+	wg.Wait()
 	return nil
 }
 
-func Monitor(ctx context.Context, rcs []*models.RunningLoader) error {
-	var wg sync.WaitGroup
-	var cancels []context.CancelFunc
-	var once sync.Once
+type monitor struct {
+	wg      sync.WaitGroup
+	cancels []context.CancelFunc
+	done    chan struct{}
+	once    sync.Once
+}
 
-	done := make(chan struct{}, len(rcs))
+func newMonitor() *monitor {
+	return &monitor{
+		done: make(chan struct{}),
+	}
+}
 
-	for _, rc := range rcs {
-		ctx, cancel := context.WithCancel(ctx)
-		cancels = append(cancels, cancel)
+func (m *monitor) WatchLoader(ctx context.Context, loader *models.RunningLoader) {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancels = append(m.cancels, cancel)
 
-		wg.Add(1)
-		go func(rc *models.RunningLoader) {
-			defer wg.Done()
-			err := rc.Monitor(ctx)
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		err := loader.Monitor(ctx)
 
+		if ctx.Err() == context.Canceled {
+			fmt.Printf("cancelled: %s\n", loader.Name())
+		} else if ctx.Err() == context.DeadlineExceeded {
+			fmt.Printf("timeout: %s\n", loader.Name())
+		} else if err == telegraf.ReloadConfig {
+			fmt.Printf("%s: %s\n", err, loader.Name())
+		} else if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Println("monitor completed without error")
+		}
+		m.once.Do(func() { close(m.done) })
+	}()
+}
+
+func (m *monitor) Wait() error {
+	select {
+	case <-m.done:
+		for _, cancel := range m.cancels {
+			cancel()
+		}
+
+	}
+
+	m.wg.Wait()
+	return nil
+}
+
+type monitorC struct {
+	wg      sync.WaitGroup
+	cancels []context.CancelFunc
+	done    chan struct{}
+	once    sync.Once
+}
+
+func newMonitorC() *monitorC {
+	return &monitorC{
+		done: make(chan struct{}),
+	}
+}
+
+func (m *monitorC) WatchLoader(ctx context.Context, loader *models.RunningLoader) {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancels = append(m.cancels, cancel)
+
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		eventsC, err := loader.MonitorC(ctx)
+		if err != nil {
+			m.once.Do(func() { close(m.done) })
+			return
+		}
+		select {
+		case err := <-eventsC:
 			if ctx.Err() == context.Canceled {
-				fmt.Printf("cancelled: %s\n", rc.Name())
+				fmt.Printf("cancelled: %s\n", loader.Name())
 			} else if ctx.Err() == context.DeadlineExceeded {
-				fmt.Printf("timeout: %s\n", rc.Name())
+				fmt.Printf("timeout: %s\n", loader.Name())
 			} else if err == telegraf.ReloadConfig {
-				fmt.Printf("%s: %s\n", err, rc.Name())
+				fmt.Printf("%s: %s\n", err, loader.Name())
 			} else if err != nil {
 				fmt.Println(err)
 			}
-			once.Do(func() { close(done) })
-		}(rc)
-	}
+			m.once.Do(func() { close(m.done) })
+			return
+		}
+	}()
+}
 
+func (m *monitorC) Wait() error {
 	select {
-	case <-done:
+	case <-m.done:
+		for _, cancel := range m.cancels {
+			cancel()
+		}
+
 	}
 
-	for _, cancel := range cancels {
-		cancel()
-	}
-
-	wg.Wait()
+	m.wg.Wait()
 	return nil
 }
 
-func MonitorC(ctx context.Context, rcs []*models.RunningLoader) error {
-	var wg sync.WaitGroup
-	var cancels []context.CancelFunc
+type Watcher struct {
+	wg      sync.WaitGroup
+	cancels []context.CancelFunc
+	done    chan struct{}
+	once    sync.Once
+}
 
-	// ugg, what if someone sends more than one message?
-	// do i need a semaphore?
-	done := make(chan error, len(rcs))
+func newWatcher() *Watcher {
+	return &Watcher{
+		done: make(chan struct{}),
+	}
+}
 
-	for _, rc := range rcs {
-		wg.Add(1)
-		ctx, cancel := context.WithCancel(ctx)
-		cancels = append(cancels, cancel)
-		go func(rc *models.RunningLoader) {
-			defer wg.Done()
-			select {
-			case err := <-rc.MonitorC(ctx):
-				if ctx.Err() == context.Canceled {
-					fmt.Printf("cancelled: %s\n", rc.Name())
-				} else if ctx.Err() == context.DeadlineExceeded {
-					fmt.Printf("timeout: %s\n", rc.Name())
-				} else if err == telegraf.ReloadConfig {
-					fmt.Printf("%s: %s\n", err, rc.Name())
-				} else if err != nil {
-					fmt.Println(err)
-				}
-				done <- err
-				return
-			}
-		}(rc)
+func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader) error {
+	ctx, cancel := context.WithCancel(ctx)
+	m.cancels = append(m.cancels, cancel)
+
+	err := loader.StartWatch(ctx)
+	if err != nil {
+		return err
 	}
 
-	select {
-	case <-done:
-		for _, c := range cancels {
-			c()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		err := loader.WaitWatch(ctx)
+
+		if ctx.Err() == context.Canceled {
+			fmt.Printf("cancelled: %s\n", loader.Name())
+		} else if ctx.Err() == context.DeadlineExceeded {
+			fmt.Printf("timeout: %s\n", loader.Name())
+		} else if err == telegraf.ReloadConfig {
+			fmt.Printf("%s: %s\n", err, loader.Name())
+		} else if err != nil {
+			fmt.Println(err)
+		} else {
+			fmt.Println("monitor completed without error")
 		}
+		m.once.Do(func() { close(m.done) })
+	}()
+	return nil
+}
+
+func (m *Watcher) Wait() error {
+	select {
+	case <-m.done:
+		for _, cancel := range m.cancels {
+			cancel()
+		}
+
 	}
 
-	wg.Wait()
+	m.wg.Wait()
 	return nil
 }
 

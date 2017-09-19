@@ -16,16 +16,16 @@ type Config struct {
 type Null struct {
 }
 
-func (c *Null) Load(ctx context.Context, plugins *telegraf.Plugins) (*telegraf.Config, error) {
+func (l *Null) Load(ctx context.Context, registry *telegraf.PluginRegistry) (*telegraf.Config, error) {
 	return &telegraf.Config{}, nil
 }
 
-func (c *Null) Name() string {
+func (l *Null) Name() string {
 	return Name
 }
 
 // Monitor is the minimum implementation of ConfigPlugin.Monitor
-func (c *Null) Monitor(ctx context.Context) error {
+func (l *Null) Monitor(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -33,7 +33,7 @@ func (c *Null) Monitor(ctx context.Context) error {
 }
 
 // MonitorC is the minimum implementation of ConfigPlugin.MonitorC
-func (c *Null) MonitorC(ctx context.Context) <-chan error {
+func (l *Null) MonitorC(ctx context.Context) (<-chan error, error) {
 	out := make(chan error)
 
 	go func() {
@@ -45,11 +45,25 @@ func (c *Null) MonitorC(ctx context.Context) <-chan error {
 		close(out)
 	}()
 
-	return out
+	return out, nil
+}
+
+// StartWatch establishes the watch
+func (l *Null) StartWatch(ctx context.Context) error {
+	return nil
+}
+
+// WaitWatch blocks until the Loader should be reloaded
+func (l *Null) WaitWatch(ctx context.Context) error {
+	select {
+	case <-ctx.Done():
+		break
+	}
+	return ctx.Err()
 }
 
 // Debugging
-func (c *Null) String() string {
+func (l *Null) String() string {
 	return "Config: null"
 }
 
