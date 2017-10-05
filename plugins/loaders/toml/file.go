@@ -43,44 +43,6 @@ func (c *Toml) Load(ctx context.Context, registry *telegraf.PluginRegistry) (*te
 	return parser.Parse(reader)
 }
 
-func (c *Toml) Monitor(ctx context.Context) error {
-	signals := make(chan os.Signal)
-	signal.Notify(signals, syscall.SIGHUP)
-	defer signal.Stop(signals)
-
-	select {
-	case <-signals:
-		return telegraf.ReloadConfig
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (c *Toml) MonitorC(ctx context.Context) (<-chan error, error) {
-	out := make(chan error)
-
-	signals := make(chan os.Signal)
-	signal.Notify(signals, syscall.SIGHUP)
-
-	go func() {
-		select {
-		case sig := <-signals:
-			if sig == syscall.SIGHUP {
-				out <- telegraf.ReloadConfig
-				break
-			}
-		case <-ctx.Done():
-			out <- ctx.Err()
-			break
-		}
-
-		signal.Stop(signals)
-		close(out)
-	}()
-
-	return out, nil
-}
-
 func (c *Toml) Watch(ctx context.Context) (telegraf.Waiter, error) {
 	return NewSignalWaiter(ctx)
 }

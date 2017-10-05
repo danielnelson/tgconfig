@@ -25,30 +25,6 @@ func (l *Null) Name() string {
 	return Name
 }
 
-// Monitor is the minimum implementation of ConfigPlugin.Monitor
-func (l *Null) Monitor(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// MonitorC is the minimum implementation of ConfigPlugin.MonitorC
-func (l *Null) MonitorC(ctx context.Context) (<-chan error, error) {
-	out := make(chan error)
-
-	go func() {
-		select {
-		case <-ctx.Done():
-			out <- ctx.Err()
-			break
-		}
-		close(out)
-	}()
-
-	return out, nil
-}
-
 func (l *Null) Watch(ctx context.Context) (telegraf.Waiter, error) {
 	return NewNullWaiter(ctx)
 }

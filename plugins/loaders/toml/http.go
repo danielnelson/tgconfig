@@ -69,48 +69,6 @@ func (c *HTTP) URLWithPath(path string) *url.URL {
 	return &url
 }
 
-func (c *HTTP) Monitor(ctx context.Context) error {
-	url := c.URLWithPath("/config/poll")
-	req, err := http.NewRequest("GET", url.String(), nil)
-	if err != nil {
-		return err
-	}
-
-	resp, err := c.client.Do(req.WithContext(ctx))
-	if err != nil {
-		return err
-	}
-	resp.Body.Close()
-	return telegraf.ReloadConfig
-}
-
-// MonitorC is an example of using a long poll http request for monitoring
-func (c *HTTP) MonitorC(ctx context.Context) (<-chan error, error) {
-	out := make(chan error, 1)
-
-	url := c.URLWithPath("/config/poll")
-	req, err := http.NewRequest("GET", url.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		resp, err := c.client.Do(req.WithContext(ctx))
-		if err != nil {
-			out <- err
-			close(out)
-			return
-		}
-		ioutil.ReadAll(resp.Body)
-		resp.Body.Close()
-
-		out <- telegraf.ReloadConfig
-		close(out)
-	}()
-
-	return out, nil
-}
-
 func (c *HTTP) Watch(ctx context.Context) (telegraf.Waiter, error) {
 	url := c.URLWithPath("/config/poll")
 	return NewHTTPWaiter(ctx, c.client, url.String())
