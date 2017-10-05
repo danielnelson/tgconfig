@@ -2,6 +2,7 @@ package null
 
 import (
 	"context"
+	"sync"
 
 	telegraf "github.com/influxdata/tgconfig"
 )
@@ -48,18 +49,32 @@ func (l *Null) MonitorC(ctx context.Context) (<-chan error, error) {
 	return out, nil
 }
 
-// StartWatch establishes the watch
-func (l *Null) StartWatch(ctx context.Context) error {
-	return nil
+func (l *Null) Watch(ctx context.Context) (telegraf.Waiter, error) {
+	return NewNullWaiter(ctx)
 }
 
-// WaitWatch blocks until the Loader should be reloaded
-func (l *Null) WaitWatch(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		break
-	}
-	return ctx.Err()
+type NullWaiter struct {
+	ctx context.Context
+	wg  sync.WaitGroup
+}
+
+func NewNullWaiter(ctx context.Context) (*NullWaiter, error) {
+	w := &NullWaiter{ctx: ctx}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+
+		select {
+		case <-w.ctx.Done():
+			break
+		}
+	}()
+	return w, nil
+}
+
+func (w *NullWaiter) Wait() error {
+	w.wg.Wait()
+	return w.ctx.Err()
 }
 
 // Debugging

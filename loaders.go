@@ -30,9 +30,10 @@ type Loader interface {
 	// Could make this a different interface that can optionally be
 	// implemented.
 
-	// StartWatch establishes the watch
-	StartWatch(context.Context) error
+	Watch(context.Context) (Waiter, error)
+}
 
-	// WaitWatch blocks until the Loader should be reloaded
-	WaitWatch(context.Context) error
+type Waiter interface {
+	// Wait blocks until the watch has completed
+	Wait() error
 }

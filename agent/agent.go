@@ -304,7 +304,7 @@ func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader)
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancels = append(m.cancels, cancel)
 
-	err := loader.StartWatch(ctx)
+	waiter, err := loader.Watch(ctx)
 	if err != nil {
 		return err
 	}
@@ -312,7 +312,7 @@ func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader)
 	m.wg.Add(1)
 	go func() {
 		defer m.wg.Done()
-		err := loader.WaitWatch(ctx)
+		err := waiter.Wait()
 
 		if ctx.Err() == context.Canceled {
 			fmt.Printf("cancelled: %s\n", loader.Name())
@@ -321,9 +321,9 @@ func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader)
 		} else if err == telegraf.ReloadConfig {
 			fmt.Printf("%s: %s\n", err, loader.Name())
 		} else if err != nil {
-			fmt.Println(err)
+			fmt.Printf("%s: %s\n", err, loader.Name())
 		} else {
-			fmt.Println("monitor completed without error")
+			fmt.Printf("monitor completed without error: %s\n", loader.Name())
 		}
 		m.once.Do(func() { close(m.done) })
 	}()

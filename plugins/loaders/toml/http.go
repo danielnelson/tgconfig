@@ -111,28 +111,38 @@ func (c *HTTP) MonitorC(ctx context.Context) (<-chan error, error) {
 	return out, nil
 }
 
-// StartWatch establishes the watch
-func (h *HTTP) StartWatch(ctx context.Context) error {
-	// In order to avoid missing events after this function ends, the http
-	// client would need to ask for events after an event number in the
-	// WaitWatch, or use another custom method depending on the backend.
-	return nil
+func (c *HTTP) Watch(ctx context.Context) (telegraf.Waiter, error) {
+	url := c.URLWithPath("/config/poll")
+	return NewHTTPWaiter(ctx, c.client, url.String())
 }
 
-// WaitWatch blocks until the Loader should be reloaded
-func (h *HTTP) WaitWatch(ctx context.Context) error {
-	url := h.URLWithPath("/config/poll")
-	req, err := http.NewRequest("GET", url.String(), nil)
+type HTTPWaiter struct {
+	ctx  context.Context
+	resp *http.Response
+}
+
+func NewHTTPWaiter(ctx context.Context, client *http.Client, url string) (*HTTPWaiter, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	w := &HTTPWaiter{ctx: ctx}
+	w.resp, err = client.Do(req.WithContext(ctx))
+	if err != nil {
+		return nil, err
+	}
+	return w, nil
+}
+
+func (w *HTTPWaiter) Wait() error {
+	defer w.resp.Body.Close()
+
+	_, err := ioutil.ReadAll(w.resp.Body)
 	if err != nil {
 		return err
 	}
-	resp, err := h.client.Do(req.WithContext(ctx))
-	if err != nil {
-		return err
-	}
-	ioutil.ReadAll(resp.Body)
-	resp.Body.Close()
-	return nil
+	return w.ctx.Err()
 }
 
 // Debugging

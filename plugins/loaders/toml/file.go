@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	telegraf "github.com/influxdata/tgconfig"
@@ -13,13 +14,8 @@ const (
 	Name = "toml"
 )
 
-type SignalWatcher struct {
-	sigC chan os.Signal
-}
-
 type Toml struct {
 	Config Config
-	SignalWatcher
 }
 
 type Config struct {
@@ -30,8 +26,7 @@ type Config struct {
 }
 
 func New(config *Config) (telegraf.Loader, error) {
-	return &Toml{Config: *config,
-		SignalWatcher: SignalWatcher{}}, nil
+	return &Toml{Config: *config}, nil
 }
 
 func (c *Toml) Name() string {
@@ -86,25 +81,38 @@ func (c *Toml) MonitorC(ctx context.Context) (<-chan error, error) {
 	return out, nil
 }
 
-// StartWatch establishes the watch
-func (w *SignalWatcher) StartWatch(ctx context.Context) error {
-	w.sigC = make(chan os.Signal, 1)
-	signal.Notify(w.sigC, syscall.SIGHUP)
-	return nil
+func (c *Toml) Watch(ctx context.Context) (telegraf.Waiter, error) {
+	return NewSignalWaiter(ctx)
 }
 
-// WaitWatch blocks until the Loader should be reloaded
-func (w *SignalWatcher) WaitWatch(ctx context.Context) error {
-	select {
-	case signal := <-w.sigC:
-		if signal == syscall.SIGHUP {
+type SignalWaiter struct {
+	ctx context.Context
+	wg  sync.WaitGroup
+}
+
+func NewSignalWaiter(ctx context.Context) (*SignalWaiter, error) {
+	sigC := make(chan os.Signal, 1)
+	signal.Notify(sigC, syscall.SIGHUP)
+
+	w := &SignalWaiter{ctx: ctx}
+	w.wg.Add(1)
+	go func() {
+		defer w.wg.Done()
+
+		select {
+		case <-sigC:
+			break
+		case <-ctx.Done():
 			break
 		}
-	case <-ctx.Done():
-		break
-	}
-	signal.Stop(w.sigC)
-	return ctx.Err()
+		signal.Stop(sigC)
+	}()
+	return w, nil
+}
+
+func (w *SignalWaiter) Wait() error {
+	w.wg.Wait()
+	return w.ctx.Err()
 }
 
 // Debugging
