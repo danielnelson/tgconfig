@@ -13,13 +13,12 @@ import (
 //
 // Existing: models/running_output.RunningOutput
 type RunningOutput struct {
-	*telegraf.OutputPlugin
+	Config *telegraf.OutputConfig
+	Output telegraf.Output
 }
 
-func NewRunningOutput(
-	plugin *telegraf.OutputPlugin,
-) *RunningOutput {
-	return &RunningOutput{plugin}
+func NewRunningOutput(config *telegraf.OutputConfig, output telegraf.Output) *RunningOutput {
+	return &RunningOutput{config, output}
 }
 
 func (ro *RunningOutput) String() string {

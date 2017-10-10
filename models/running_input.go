@@ -12,18 +12,16 @@ import (
 //
 // Existing: internal/models/running_input.RunningInput
 type RunningInput struct {
-	*telegraf.InputPlugin
+	Config *telegraf.InputConfig
+	Input  telegraf.Input
 }
 
-func NewRunningInput(
-	plugin *telegraf.InputPlugin,
-) *RunningInput {
-	return &RunningInput{plugin}
+func NewRunningInput(config *telegraf.InputConfig, input telegraf.Input) *RunningInput {
+	return &RunningInput{config, input}
 }
 
 func (ri *RunningInput) String() string {
 	lines := []string{}
-
 	switch s := ri.Input.(type) {
 	case fmt.Stringer:
 		lines = append(lines, s.String())

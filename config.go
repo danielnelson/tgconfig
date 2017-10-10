@@ -50,37 +50,53 @@ func (c *OutputConfig) String() string {
 	return fmt.Sprintf("  output:name_override: %s", c.NameOverride)
 }
 
+// LoaderConfig is the shared config for all loaders.
+//
+// Just here for symmetry for now
+type LoaderConfig struct {
+}
+
 // InputPlugin packages the global settings with the Input instance.
 type InputPlugin struct {
-	Input
-	Config *InputConfig
+	Config interface{}
+	*InputConfig
 }
 
-// InputPlugin packages the global settings with the Output instance.
+// OutputPlugin packages the global settings with the Output instance.
 type OutputPlugin struct {
-	Output
-	Config *OutputConfig
+	Config interface{}
+	*OutputConfig
 }
 
+// LoaderPlugin packages the global Loader config with the Loader config.
+//
 // LoaderPlugin exists for symmetry with InputPlugin/OutputPlugin.  If a
 // LoaderConfig was introduced it would be stored here.
 type LoaderPlugin struct {
-	Loader
+	Config interface{}
+	*LoaderConfig
 }
 
 // Config is the top level configuration struct.
 //
 // Loader plugins build this struct.
 type Config struct {
-	Agent   AgentConfig
-	Inputs  []*InputPlugin
-	Outputs []*OutputPlugin
-	Loaders []*LoaderPlugin
+	Agent AgentConfig
+	// input-name -> ConfigType
+	Inputs  map[string][]*InputPlugin
+	Outputs map[string][]*OutputPlugin
+	Loaders map[string][]*LoaderPlugin
 }
 
 // PluginRegistry holds the set of available plugins.  This provides a layer of
 // indirection so that you can define a custom set of plugins.
 type PluginRegistry struct {
+	Loaders map[string]interface{}
+	Inputs  map[string]interface{}
+	Outputs map[string]interface{}
+}
+
+type ConfigRegistry struct {
 	Loaders map[string]interface{}
 	Inputs  map[string]interface{}
 	Outputs map[string]interface{}

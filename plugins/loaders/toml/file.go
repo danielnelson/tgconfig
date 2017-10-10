@@ -33,7 +33,7 @@ func (c *Toml) Name() string {
 	return Name
 }
 
-func (c *Toml) Load(ctx context.Context, registry *telegraf.PluginRegistry) (*telegraf.Config, error) {
+func (c *Toml) Load(ctx context.Context, registry *telegraf.ConfigRegistry) (*telegraf.Config, error) {
 	reader, err := os.Open(c.Config.Path)
 	if err != nil {
 		return nil, err

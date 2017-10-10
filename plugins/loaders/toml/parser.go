@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"reflect"
-	"strings"
 
 	"github.com/influxdata/tgconfig/models"
 	"github.com/influxdata/tgconfig/plugins/parsers"
@@ -17,10 +16,10 @@ import (
 
 type parser struct {
 	md       toml.MetaData
-	registry *telegraf.PluginRegistry
+	registry *telegraf.ConfigRegistry
 }
 
-func NewParser(registry *telegraf.PluginRegistry) *parser {
+func NewParser(registry *telegraf.ConfigRegistry) *parser {
 	return &parser{registry: registry}
 }
 
@@ -37,17 +36,17 @@ func (p *parser) Parse(reader io.Reader) (*telegraf.Config, error) {
 		return nil, err
 	}
 
-	ri, err := LoadInputs(p.md, p.registry, conf.Inputs)
+	ri, err := p.loadInputs(conf.Inputs)
 	if err != nil {
 		return nil, err
 	}
 
-	ro, err := LoadOutputs(p.md, p.registry, conf.Outputs)
+	ro, err := p.loadOutputs(conf.Outputs)
 	if err != nil {
 		return nil, err
 	}
 
-	rl, err := LoadLoaders(p.md, p.registry, conf.Loaders)
+	rl, err := p.loadLoaders(conf.Loaders)
 	if err != nil {
 		return nil, err
 	}
@@ -55,9 +54,10 @@ func (p *parser) Parse(reader io.Reader) (*telegraf.Config, error) {
 	// Now that we have tried to parse the entire file we report unrecognized plugins.
 	for _, item := range p.md.Undecoded() {
 		// Recursive config plugin loading is not allowed.
-		if strings.HasPrefix(item.String(), "configs.") {
-			continue
-		}
+		// edit: Still error though?
+		// if strings.HasPrefix(item.String(), "loaders.") {
+		// 	continue
+		// }
 		return nil, fmt.Errorf("undecoded toml key: %s", item)
 	}
 
@@ -70,13 +70,12 @@ func (p *parser) Parse(reader io.Reader) (*telegraf.Config, error) {
 	return config, nil
 }
 
-func LoadInputs(md toml.MetaData, registry *telegraf.PluginRegistry, inputs map[string][]toml.Primitive) (
-	[]*telegraf.InputPlugin,
-	error,
-) {
-	ri := make([]*telegraf.InputPlugin, 0)
+func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*telegraf.InputPlugin, error) {
+	configs := make(map[string][]*telegraf.InputPlugin)
 
-	loaders, err := models.Check(registry.Inputs)
+	// Function on Registry?
+	// Don't call this loader anymore
+	loaders, err := models.Check(p.registry.Inputs)
 	if err != nil {
 		return nil, err
 	}
@@ -87,63 +86,34 @@ func LoadInputs(md toml.MetaData, registry *telegraf.PluginRegistry, inputs map[
 			return nil, fmt.Errorf("unknown plugin: %s", name)
 		}
 
-		for _, p := range primitive {
-			// Parse Input level configuration
+		for _, prim := range primitive {
+			// Parse common Input level configuration
 			inputConfig := &telegraf.InputConfig{}
-			if err := md.PrimitiveDecode(p, inputConfig); err != nil {
+			if err := p.md.PrimitiveDecode(prim, inputConfig); err != nil {
 				return nil, err
 			}
 
-			plugin := loadPlugin(md, p, loader)
+			// Parse specific Input configuration
+			config := p.loadConfig(prim, loader)
 
-			// Parser injection is done for backwards compatibility, new
-			// plugins should add the ParserConfig to the plugins config and
-			// call NewParser themselves.
-			//
-			// Not sure if this is actually possible though.  I think we will
-			// at the very least have to introduce a new toml syntax.
-			//
-			// Ideally, the Config could just have a Parser interface and it
-			// would be filled before calling New:
-			//
-			// type Config struct {
-			//     Parser telegraf.ParserConfig
-			// }
-			//
-			// func New(config *Config) (telegraf.Input, error) {
-			//     // maybe move this?
-			//     parser := model.NewParser(config.Parser)
-			//     return &Example{parser: parser}
-			// }
-			if plugin, ok := plugin.(telegraf.ParserInput); ok {
-				parser, err := LoadParser(md, p)
-				if err != nil {
-					return nil, err
-				}
-
-				plugin.SetParser(parser)
+			cur, ok := configs[name]
+			if !ok {
+				cur = make([]*telegraf.InputPlugin, 0)
 			}
-
-			switch plugin := plugin.(type) {
-			case telegraf.Input:
-				ip := &telegraf.InputPlugin{Input: plugin, Config: inputConfig}
-				ri = append(ri, ip)
-			default:
-				return nil, fmt.Errorf("unexpected plugin type: %s", name)
+			plugin := &telegraf.InputPlugin{
+				InputConfig: inputConfig,
+				Config:      config,
 			}
-
+			configs[name] = append(cur, plugin)
 		}
 	}
-	return ri, nil
+	return configs, nil
 }
 
-func LoadOutputs(md toml.MetaData, registry *telegraf.PluginRegistry, outputs map[string][]toml.Primitive) (
-	[]*telegraf.OutputPlugin,
-	error,
-) {
-	ro := make([]*telegraf.OutputPlugin, 0)
+func (p *parser) loadOutputs(outputs map[string][]toml.Primitive) (map[string][]*telegraf.OutputPlugin, error) {
+	configs := make(map[string][]*telegraf.OutputPlugin)
 
-	loaders, err := models.Check(registry.Outputs)
+	loaders, err := models.Check(p.registry.Outputs)
 	if err != nil {
 		return nil, err
 	}
@@ -154,26 +124,83 @@ func LoadOutputs(md toml.MetaData, registry *telegraf.PluginRegistry, outputs ma
 			return nil, fmt.Errorf("unknown plugin: %s", name)
 		}
 
-		for _, p := range primitive {
+		for _, prim := range primitive {
 			// Parse Output level configuration
 			outputConfig := &telegraf.OutputConfig{}
-			if err := md.PrimitiveDecode(p, outputConfig); err != nil {
+			if err := p.md.PrimitiveDecode(prim, outputConfig); err != nil {
 				return nil, err
 			}
 
-			plugin := loadPlugin(md, p, loader)
+			// Parse specific configuration
+			config := p.loadConfig(prim, loader)
 
-			switch plugin := plugin.(type) {
-			case telegraf.Output:
-				op := &telegraf.OutputPlugin{Output: plugin, Config: outputConfig}
-				ro = append(ro, op)
-			default:
-				return nil, fmt.Errorf("unexpected plugin type: %s", name)
+			cur, ok := configs[name]
+			if !ok {
+				cur = make([]*telegraf.OutputPlugin, 0)
 			}
 
+			plugin := &telegraf.OutputPlugin{
+				OutputConfig: outputConfig,
+				Config:       config,
+			}
+			configs[name] = append(cur, plugin)
 		}
 	}
-	return ro, nil
+	return configs, nil
+}
+
+func (p *parser) loadLoaders(loaders map[string][]toml.Primitive) (map[string][]*telegraf.LoaderPlugin, error) {
+	configs := make(map[string][]*telegraf.LoaderPlugin, 0)
+
+	loaderConfigs, err := models.Check(p.registry.Loaders)
+	if err != nil {
+		return nil, err
+	}
+
+	for name, primitive := range loaders {
+		loader, ok := loaderConfigs[name]
+		if !ok {
+			return nil, fmt.Errorf("unknown plugin: %s", name)
+		}
+
+		for _, prim := range primitive {
+			loaderConfig := &telegraf.LoaderConfig{}
+			if err := p.md.PrimitiveDecode(prim, loaderConfig); err != nil {
+				return nil, err
+			}
+
+			// Parse specific configuration
+			config := p.loadConfig(prim, loader)
+
+			cur, ok := configs[name]
+			if !ok {
+				cur = make([]*telegraf.LoaderPlugin, 0)
+			}
+
+			plugin := &telegraf.LoaderPlugin{
+				LoaderConfig: loaderConfig,
+				Config:       config,
+			}
+			configs[name] = append(cur, plugin)
+		}
+	}
+	return configs, nil
+}
+
+func (p *parser) loadConfig(prim toml.Primitive, factory interface{}) interface{} {
+	vfactory := reflect.ValueOf(factory)
+
+	// Get the Type of the first and only argument
+	configType := vfactory.Type().In(0)
+
+	// Create a new config struct
+	config := reflect.New(configType.Elem()).Interface()
+
+	// Parse TOML into config struct
+	if err := p.md.PrimitiveDecode(prim, config); err != nil {
+		log.Fatal(err)
+	}
+	return config
 }
 
 func LoadParser(md toml.MetaData, p toml.Primitive) (
@@ -206,39 +233,6 @@ func LoadParser(md toml.MetaData, p toml.Primitive) (
 	}
 
 	return nil, fmt.Errorf("unexpected plugin type: %s", config.DataFormat)
-}
-
-func LoadLoaders(md toml.MetaData, registry *telegraf.PluginRegistry, configs map[string][]toml.Primitive) (
-	[]*telegraf.LoaderPlugin,
-	error,
-) {
-	cp := make([]*telegraf.LoaderPlugin, 0)
-
-	loaders, err := models.Check(registry.Loaders)
-	if err != nil {
-		return nil, err
-	}
-
-	for name, primitive := range configs {
-		loader, ok := loaders[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown plugin: %s", name)
-		}
-
-		for _, p := range primitive {
-			plugin := loadPlugin(md, p, loader)
-
-			switch plugin := plugin.(type) {
-			case telegraf.Loader:
-				clp := &telegraf.LoaderPlugin{Loader: plugin}
-				cp = append(cp, clp)
-			default:
-				return nil, fmt.Errorf("unexpected plugin type: %s", name)
-			}
-
-		}
-	}
-	return cp, nil
 }
 
 func loadPlugin(md toml.MetaData, p toml.Primitive, factory interface{}) interface{} {

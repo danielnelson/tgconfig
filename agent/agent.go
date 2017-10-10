@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"reflect"
 	"sync"
 	"time"
 
@@ -33,6 +34,84 @@ func NewAgent(flags *Flags) *Agent {
 	return &Agent{flags}
 }
 
+func createBuiltinLoader(path string) (*models.RunningLoader, error) {
+	config := toml.Config{Path: path}
+	loader, err := toml.New(&config)
+	if err != nil {
+		return nil, err
+	}
+
+	rl := models.NewRunningLoader(&telegraf.LoaderConfig{}, loader)
+	return rl, nil
+}
+
+func createInput(
+	name string,
+	plugin *telegraf.InputPlugin,
+	registry *telegraf.ConfigRegistry,
+) (*models.RunningInput, error) {
+	factory, ok := registry.Inputs[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
+	p := createPlugin(plugin.Config, factory)
+
+	switch input := p.(type) {
+	case telegraf.Input:
+		return models.NewRunningInput(plugin.InputConfig, input), nil
+	default:
+		return nil, fmt.Errorf("unexpected plugin type: %s", name)
+	}
+}
+
+func createOutput(
+	name string,
+	plugin *telegraf.OutputPlugin,
+	registry *telegraf.ConfigRegistry,
+) (*models.RunningOutput, error) {
+	factory, ok := registry.Outputs[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
+	p := createPlugin(plugin.Config, factory)
+
+	switch output := p.(type) {
+	case telegraf.Output:
+		return models.NewRunningOutput(plugin.OutputConfig, output), nil
+	default:
+		return nil, fmt.Errorf("unexpected plugin type: %s", name)
+	}
+}
+
+func createLoader(
+	name string,
+	plugin *telegraf.LoaderPlugin,
+	registry *telegraf.ConfigRegistry,
+) (*models.RunningLoader, error) {
+	factory, ok := registry.Loaders[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
+	p := createPlugin(plugin.Config, factory)
+
+	switch loader := p.(type) {
+	case telegraf.Loader:
+		return models.NewRunningLoader(plugin.LoaderConfig, loader), nil
+	default:
+		return nil, fmt.Errorf("unexpected plugin type: %s", name)
+	}
+}
+
+func createPlugin(config interface{}, factory interface{}) interface{} {
+	vfactory := reflect.ValueOf(factory)
+
+	// Call factory with the config struct
+	in := make([]reflect.Value, 1)
+	in[0] = reflect.ValueOf(config)
+	plugin := vfactory.Call(in)[0].Interface()
+	return plugin
+}
+
 // Run starts the main event loop
 func (a *Agent) Run() error {
 	// Load the base configuration; required and always using the toml config
@@ -43,11 +122,10 @@ func (a *Agent) Run() error {
 		configfile = a.flags.Args[0]
 	}
 
-	configFileLoader, err := toml.New(&toml.Config{Path: configfile})
+	builtinLoader, err := createBuiltinLoader(configfile)
 	if err != nil {
 		return err
 	}
-	builtinLoader := &telegraf.LoaderPlugin{Loader: configFileLoader}
 
 	// dealing with recursion:
 	// - only local toml can contain more config plugins? yes but...
@@ -56,7 +134,7 @@ func (a *Agent) Run() error {
 	// a plugin could theoretically chain load or whatever for redirection, but it has to load
 	// all the plugins.
 
-	registry := &telegraf.PluginRegistry{
+	registry := &telegraf.ConfigRegistry{
 		Loaders: loaders.Loaders,
 		Inputs:  inputs.Inputs,
 		Outputs: outputs.Outputs,
@@ -101,10 +179,9 @@ func (a *Agent) Run() error {
 			return err
 		}
 
-		rl := models.NewRunningLoader(builtinLoader)
-		rls = append(rls, rl)
+		rls = append(rls, builtinLoader)
 
-		fmt.Println(rl.String())
+		fmt.Println(builtinLoader.String())
 
 		// Begin monitoring all plugins for changes, by monitoring before
 		// loading we ensure the config can never be stale.
@@ -113,49 +190,72 @@ func (a *Agent) Run() error {
 		// interface doesn't allow us to know when this happened.
 		// var watcher = newMonitor()
 		var watcher = newWatcher()
-		watcher.WatchLoader(ctx, rl)
+		watcher.WatchLoader(ctx, builtinLoader)
 
-		for _, input := range conf.Inputs {
-			ri := models.NewRunningInput(input)
-			ris = append(ris, ri)
-
-			// Debugging
-			fmt.Println(ri.String())
-		}
-		for _, output := range conf.Outputs {
-			ro := models.NewRunningOutput(output)
-			ros = append(ros, ro)
-
-			// Debugging
-			fmt.Println(ro.String())
-		}
-
-		for _, loader := range conf.Loaders {
-			rl := models.NewRunningLoader(loader)
-			rls = append(rls, rl)
-
-			watcher.WatchLoader(ctx, rl)
-
-			conf, err := rl.Load(ctx, registry)
-			if err != nil {
-				return err
-			}
-
-			fmt.Println(rl.String())
-
-			for _, input := range conf.Inputs {
-				ri := models.NewRunningInput(input)
+		for name, plugins := range conf.Inputs {
+			for _, plugin := range plugins {
+				ri, err := createInput(name, plugin, registry)
+				if err != nil {
+					// what do
+				}
 				ris = append(ris, ri)
 
 				// Debugging
 				fmt.Println(ri.String())
 			}
-			for _, output := range conf.Outputs {
-				ro := models.NewRunningOutput(output)
+		}
+		for name, plugins := range conf.Outputs {
+			for _, plugin := range plugins {
+				ro, err := createOutput(name, plugin, registry)
+				if err != nil {
+					// what do
+				}
 				ros = append(ros, ro)
 
 				// Debugging
 				fmt.Println(ro.String())
+			}
+		}
+
+		for name, plugins := range conf.Loaders {
+			var conf *telegraf.Config
+			for _, plugin := range plugins {
+				rl, err := createLoader(name, plugin, registry)
+				rls = append(rls, rl)
+
+				watcher.WatchLoader(ctx, rl)
+
+				conf, err = rl.Load(ctx, registry)
+				if err != nil {
+					return err
+				}
+
+				fmt.Println(rl.String())
+			}
+
+			for name, plugins := range conf.Inputs {
+				for _, plugin := range plugins {
+					ri, err := createInput(name, plugin, registry)
+					if err != nil {
+						// what do
+					}
+					ris = append(ris, ri)
+
+					// Debugging
+					fmt.Println(ri.String())
+				}
+			}
+			for name, plugins := range conf.Outputs {
+				for _, plugin := range plugins {
+					ro, err := createOutput(name, plugin, registry)
+					if err != nil {
+						// what do
+					}
+					ros = append(ros, ro)
+
+					// Debugging
+					fmt.Println(ro.String())
+				}
 			}
 		}
 

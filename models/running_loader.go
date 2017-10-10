@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"fmt"
 
 	telegraf "github.com/influxdata/tgconfig"
@@ -8,13 +9,12 @@ import (
 
 // RunningLoader exists for symmetry with the other Running classes.
 type RunningLoader struct {
-	*telegraf.LoaderPlugin
+	Config *telegraf.LoaderConfig
+	Loader telegraf.Loader
 }
 
-func NewRunningLoader(
-	plugin *telegraf.LoaderPlugin,
-) *RunningLoader {
-	return &RunningLoader{plugin}
+func NewRunningLoader(config *telegraf.LoaderConfig, loader telegraf.Loader) *RunningLoader {
+	return &RunningLoader{config, loader}
 }
 
 func (rc *RunningLoader) String() string {
@@ -24,4 +24,19 @@ func (rc *RunningLoader) String() string {
 	default:
 		return ""
 	}
+}
+
+func (rc *RunningLoader) Name() string {
+	return rc.Loader.Name()
+}
+
+func (rc *RunningLoader) Load(
+	ctx context.Context,
+	registry *telegraf.ConfigRegistry,
+) (*telegraf.Config, error) {
+	return rc.Loader.Load(ctx, registry)
+}
+
+func (rc *RunningLoader) Watch(ctx context.Context) (telegraf.Waiter, error) {
+	return rc.Loader.Watch(ctx)
 }

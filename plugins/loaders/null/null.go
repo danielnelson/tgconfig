@@ -17,7 +17,7 @@ type Config struct {
 type Null struct {
 }
 
-func (l *Null) Load(ctx context.Context, registry *telegraf.PluginRegistry) (*telegraf.Config, error) {
+func (l *Null) Load(ctx context.Context, registry *telegraf.ConfigRegistry) (*telegraf.Config, error) {
 	return &telegraf.Config{}, nil
 }
 
