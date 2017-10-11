@@ -25,6 +25,17 @@ func NewRunningInput(
 		return nil, err
 	}
 
+	// switch input := input.(type) {
+	// case telegraf.ParserInput:
+	// 	// create parser
+
+	// 	parser, err := CreateParser(config.ParserConfig, factory)
+	// 	if err != nil {
+	// 		return nil, err
+	// 	}
+	// 	input.SetParser(parser)
+	// }
+
 	return &RunningInput{config.Config, input}, nil
 }
 

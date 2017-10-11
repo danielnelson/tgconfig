@@ -12,7 +12,7 @@ type FilterConfig struct {
 
 // ParserConfig is a new method for defining parsers.  Still needs some work.
 type ParserConfig struct {
-	Parser string `toml:"parser"`
+	DataFormat string `toml:"data_format"`
 }
 
 // AgentConfig contains the Agent configuration
@@ -61,12 +61,16 @@ func (c *CommonLoaderConfig) String() string {
 	return ""
 }
 
+// Config struct for plugin
 type PluginConfig = interface{}
+
+// Factory function for plugin: func (*PluginConfig) (Plugin, error)
 type PluginFactory = interface{}
 
 type InputConfig struct {
 	Config       *CommonInputConfig
 	PluginConfig PluginConfig
+	ParserConfig PluginConfig
 }
 
 func (c *InputConfig) String() string {
@@ -102,10 +106,29 @@ type Config struct {
 	Loaders map[string][]*LoaderConfig
 }
 
-// type ConfigRegistry interface {
-// 	Input(name string) interface{}
+type PluginRegistry interface {
+	GetInputPluginConfig(string) PluginConfig
+	GetOutputPluginConfig(string) PluginConfig
+	GetLoaderPluginConfig(string) PluginConfig
+	GetParserPluginConfig(string) PluginConfig
 
-// }
+	GetInputFactory(string) PluginFactory
+	GetOutputFactory(string) PluginFactory
+	GetLoaderFactory(string) PluginFactory
+	GetParserFactory(string) PluginFactory
+
+
+	// maybe an enum?
+	// maybe two interfaces
+
+	// c := GetPluginConfig("input", "example")
+	// err := p.md.PrimitiveDecode(primitive, c)
+	GetPluginConfig(pluginType string, name string) PluginConfig
+
+	// f := GetFactory("input", "example")
+	// input, err := f(config)
+	GetFactory(pluginType string, name string) PluginFactory
+}
 
 // ConfigRegistry holds the set of available plugins.  This provides a layer of
 // indirection so that you can define a custom set of plugins.
@@ -116,6 +139,7 @@ type ConfigRegistry struct {
 	Loaders map[string]PluginFactory
 	Inputs  map[string]PluginFactory
 	Outputs map[string]PluginFactory
+	Parsers map[string]PluginFactory
 }
 
 

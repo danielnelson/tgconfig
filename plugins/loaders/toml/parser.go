@@ -7,7 +7,6 @@ import (
 	"reflect"
 
 	"github.com/influxdata/tgconfig/models"
-	"github.com/influxdata/tgconfig/plugins/parsers"
 
 	"github.com/BurntSushi/toml"
 
@@ -93,12 +92,26 @@ func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*t
 				return nil, err
 			}
 
+			// We don't know if this plugin will have a parser until we new
+			// it, so we will just always try to load a parser just in case.
+			dataFormat := commonConfig.DataFormat
+			if dataFormat == "" {
+				dataFormat = "influx"
+			}
+
+			var parserConfig telegraf.PluginConfig
+			parser, ok := p.registry.Parsers[dataFormat]
+			if ok {
+				parserConfig = p.loadConfig(primitive, parser)
+			}
+
 			// Parse Input specific configuration
 			pluginConfig := p.loadConfig(primitive, factory)
 
 			plugin := &telegraf.InputConfig{
 				Config:       commonConfig,
 				PluginConfig: pluginConfig,
+				ParserConfig: parserConfig,
 			}
 			configs = append(configs, plugin)
 		}
@@ -191,57 +204,4 @@ func (p *parser) loadConfig(prim toml.Primitive, factory interface{}) interface{
 		log.Fatal(err)
 	}
 	return config
-}
-
-func LoadParser(md toml.MetaData, p toml.Primitive) (
-	telegraf.Parser,
-	error,
-) {
-	parsers, err := models.Check(parsers.Parsers)
-	if err != nil {
-		return nil, err
-	}
-
-	config := &models.ParserConfig{}
-	if err := md.PrimitiveDecode(p, config); err != nil {
-		return nil, err
-	}
-
-	if config.DataFormat == "" {
-		config.DataFormat = "influx"
-	}
-
-	parser, ok := parsers[config.DataFormat]
-	if !ok {
-		return nil, fmt.Errorf("unknown parser: %q", config.DataFormat)
-	}
-
-	plugin := loadPlugin(md, p, parser)
-
-	if plugin, ok := plugin.(telegraf.Parser); ok {
-		return plugin, nil
-	}
-
-	return nil, fmt.Errorf("unexpected plugin type: %s", config.DataFormat)
-}
-
-func loadPlugin(md toml.MetaData, p toml.Primitive, factory interface{}) interface{} {
-	vfactory := reflect.ValueOf(factory)
-
-	// Get the Type of the first and only argument
-	configType := vfactory.Type().In(0)
-
-	// Create a new config struct
-	config := reflect.New(configType.Elem()).Interface()
-
-	// Parse TOML into config struct
-	if err := md.PrimitiveDecode(p, config); err != nil {
-		log.Fatal(err)
-	}
-
-	// Call factory with the config struct
-	in := make([]reflect.Value, 1)
-	in[0] = reflect.ValueOf(config)
-	plugin := vfactory.Call(in)[0].Interface()
-	return plugin
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/influxdata/tgconfig/plugins/loaders"
 	"github.com/influxdata/tgconfig/plugins/loaders/toml"
 	"github.com/influxdata/tgconfig/plugins/outputs"
+	"github.com/influxdata/tgconfig/plugins/parsers"
 )
 
 // Agent represents the main event loop
@@ -80,6 +81,7 @@ func (a *Agent) Run() error {
 		Loaders: loaders.Loaders,
 		Inputs:  inputs.Inputs,
 		Outputs: outputs.Outputs,
+		Parsers: parsers.Parsers,
 	}
 
 	var wg sync.WaitGroup
