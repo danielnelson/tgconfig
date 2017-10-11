@@ -34,6 +34,6 @@ func (p *Example) String() string {
 }
 
 // NewExampleOutput creates an ExampleOutput from an ExampleOutputConfig.
-func New(config *Config) telegraf.Output {
-	return &Example{*config}
+func New(config *Config) (telegraf.Output, error) {
+	return &Example{*config}, nil
 }

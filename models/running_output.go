@@ -13,12 +13,20 @@ import (
 //
 // Existing: models/running_output.RunningOutput
 type RunningOutput struct {
-	Config *telegraf.OutputConfig
+	Config *telegraf.CommonOutputConfig
 	Output telegraf.Output
 }
 
-func NewRunningOutput(config *telegraf.OutputConfig, output telegraf.Output) *RunningOutput {
-	return &RunningOutput{config, output}
+func NewRunningOutput(
+	config *telegraf.OutputConfig,
+	factory telegraf.PluginFactory,
+) (*RunningOutput, error) {
+	output, err := CreateOutput(config.PluginConfig, factory)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RunningOutput{config.Config, output}, nil
 }
 
 func (ro *RunningOutput) String() string {

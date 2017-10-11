@@ -30,74 +30,92 @@ type AgentConfig struct {
 //   - Plugin author does not need to remember to add standard options.
 // - con:
 //   - Breaks the product that a Config plugin must produce into two parts.
-type InputConfig struct {
+type CommonInputConfig struct {
 	FilterConfig
 	ParserConfig
+
+	Config interface{}
 }
 
-func (c *InputConfig) String() string {
+func (c *CommonInputConfig) String() string {
 	return fmt.Sprintf("  input:name_override: %s", c.NameOverride)
 }
 
 // OutputConfig is the required config for all outputs.
 //
 // This configurations is generally used by the RunningOutput.
-type OutputConfig struct {
+type CommonOutputConfig struct {
 	FilterConfig
 }
 
-func (c *OutputConfig) String() string {
+func (c *CommonOutputConfig) String() string {
 	return fmt.Sprintf("  output:name_override: %s", c.NameOverride)
 }
 
-// LoaderConfig is the shared config for all loaders.
+// LoaderConfig is the config for any loaders.
 //
 // Just here for symmetry for now
-type LoaderConfig struct {
+type CommonLoaderConfig struct{}
+
+func (c *CommonLoaderConfig) String() string {
+	return ""
 }
 
-// InputPlugin packages the global settings with the Input instance.
-type InputPlugin struct {
-	Config interface{}
-	*InputConfig
+type PluginConfig = interface{}
+type PluginFactory = interface{}
+
+type InputConfig struct {
+	Config       *CommonInputConfig
+	PluginConfig PluginConfig
+}
+
+func (c *InputConfig) String() string {
+	return ""
 }
 
 // OutputPlugin packages the global settings with the Output instance.
-type OutputPlugin struct {
-	Config interface{}
-	*OutputConfig
+type OutputConfig struct {
+	Config       *CommonOutputConfig
+	PluginConfig PluginConfig
+}
+
+func (c *OutputConfig) String() string {
+	return ""
 }
 
 // LoaderPlugin packages the global Loader config with the Loader config.
 //
 // LoaderPlugin exists for symmetry with InputPlugin/OutputPlugin.  If a
 // LoaderConfig was introduced it would be stored here.
-type LoaderPlugin struct {
-	Config interface{}
-	*LoaderConfig
+type LoaderConfig struct {
+	Config       *CommonLoaderConfig
+	PluginConfig PluginConfig
 }
 
 // Config is the top level configuration struct.
 //
 // Loader plugins build this struct.
 type Config struct {
-	Agent AgentConfig
-	// input-name -> ConfigType
-	Inputs  map[string][]*InputPlugin
-	Outputs map[string][]*OutputPlugin
-	Loaders map[string][]*LoaderPlugin
+	Agent   AgentConfig
+	Inputs  map[string][]*InputConfig
+	Outputs map[string][]*OutputConfig
+	Loaders map[string][]*LoaderConfig
 }
 
-// PluginRegistry holds the set of available plugins.  This provides a layer of
+// type ConfigRegistry interface {
+// 	Input(name string) interface{}
+
+// }
+
+// ConfigRegistry holds the set of available plugins.  This provides a layer of
 // indirection so that you can define a custom set of plugins.
-type PluginRegistry struct {
-	Loaders map[string]interface{}
-	Inputs  map[string]interface{}
-	Outputs map[string]interface{}
+//
+// plugin_name -> plugin_factory
+// i.e.: "cpu" -> cpu.New(*cpu.Config) (Input, error)
+type ConfigRegistry struct {
+	Loaders map[string]PluginFactory
+	Inputs  map[string]PluginFactory
+	Outputs map[string]PluginFactory
 }
 
-type ConfigRegistry struct {
-	Loaders map[string]interface{}
-	Inputs  map[string]interface{}
-	Outputs map[string]interface{}
-}
+

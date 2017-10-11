@@ -12,12 +12,20 @@ import (
 //
 // Existing: internal/models/running_input.RunningInput
 type RunningInput struct {
-	Config *telegraf.InputConfig
+	Config *telegraf.CommonInputConfig
 	Input  telegraf.Input
 }
 
-func NewRunningInput(config *telegraf.InputConfig, input telegraf.Input) *RunningInput {
-	return &RunningInput{config, input}
+func NewRunningInput(
+	config *telegraf.InputConfig,
+	factory telegraf.PluginFactory,
+) (*RunningInput, error) {
+	input, err := CreateInput(config.PluginConfig, factory)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RunningInput{config.Config, input}, nil
 }
 
 func (ri *RunningInput) String() string {

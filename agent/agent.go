@@ -34,72 +34,13 @@ func NewAgent(flags *Flags) *Agent {
 	return &Agent{flags}
 }
 
-func createBuiltinLoader(path string) (*models.RunningLoader, error) {
-	config := toml.Config{Path: path}
-	loader, err := toml.New(&config)
-	if err != nil {
-		return nil, err
+func createBuiltinLoader(path string, factory telegraf.PluginFactory) (*models.RunningLoader, error) {
+	config := &telegraf.LoaderConfig{
+		Config:       &telegraf.CommonLoaderConfig{},
+		PluginConfig: &toml.Config{Path: path},
 	}
 
-	rl := models.NewRunningLoader(&telegraf.LoaderConfig{}, loader)
-	return rl, nil
-}
-
-func createInput(
-	name string,
-	plugin *telegraf.InputPlugin,
-	registry *telegraf.ConfigRegistry,
-) (*models.RunningInput, error) {
-	factory, ok := registry.Inputs[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	p := createPlugin(plugin.Config, factory)
-
-	switch input := p.(type) {
-	case telegraf.Input:
-		return models.NewRunningInput(plugin.InputConfig, input), nil
-	default:
-		return nil, fmt.Errorf("unexpected plugin type: %s", name)
-	}
-}
-
-func createOutput(
-	name string,
-	plugin *telegraf.OutputPlugin,
-	registry *telegraf.ConfigRegistry,
-) (*models.RunningOutput, error) {
-	factory, ok := registry.Outputs[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	p := createPlugin(plugin.Config, factory)
-
-	switch output := p.(type) {
-	case telegraf.Output:
-		return models.NewRunningOutput(plugin.OutputConfig, output), nil
-	default:
-		return nil, fmt.Errorf("unexpected plugin type: %s", name)
-	}
-}
-
-func createLoader(
-	name string,
-	plugin *telegraf.LoaderPlugin,
-	registry *telegraf.ConfigRegistry,
-) (*models.RunningLoader, error) {
-	factory, ok := registry.Loaders[name]
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	p := createPlugin(plugin.Config, factory)
-
-	switch loader := p.(type) {
-	case telegraf.Loader:
-		return models.NewRunningLoader(plugin.LoaderConfig, loader), nil
-	default:
-		return nil, fmt.Errorf("unexpected plugin type: %s", name)
-	}
+	return models.NewRunningLoader(config, factory)
 }
 
 func createPlugin(config interface{}, factory interface{}) interface{} {
@@ -122,7 +63,8 @@ func (a *Agent) Run() error {
 		configfile = a.flags.Args[0]
 	}
 
-	builtinLoader, err := createBuiltinLoader(configfile)
+	factory := loaders.Loaders["toml"]
+	builtinLoader, err := createBuiltinLoader(configfile, factory)
 	if err != nil {
 		return err
 	}
@@ -192,11 +134,17 @@ func (a *Agent) Run() error {
 		var watcher = newWatcher()
 		watcher.WatchLoader(ctx, builtinLoader)
 
-		for name, plugins := range conf.Inputs {
-			for _, plugin := range plugins {
-				ri, err := createInput(name, plugin, registry)
+		for name, configs := range conf.Inputs {
+			for _, config := range configs {
+				factory, ok := registry.Inputs[name]
+				if !ok {
+					return fmt.Errorf("unknown plugin: %s", name)
+				}
+
+				ri, err := models.NewRunningInput(config, factory)
 				if err != nil {
 					// what do
+					return err
 				}
 				ris = append(ris, ri)
 
@@ -204,9 +152,14 @@ func (a *Agent) Run() error {
 				fmt.Println(ri.String())
 			}
 		}
-		for name, plugins := range conf.Outputs {
-			for _, plugin := range plugins {
-				ro, err := createOutput(name, plugin, registry)
+		for name, configs := range conf.Outputs {
+			for _, config := range configs {
+				factory, ok := registry.Outputs[name]
+				if !ok {
+					return fmt.Errorf("unknown plugin: %s", name)
+				}
+
+				ro, err := models.NewRunningOutput(config, factory)
 				if err != nil {
 					// what do
 				}
@@ -217,10 +170,18 @@ func (a *Agent) Run() error {
 			}
 		}
 
-		for name, plugins := range conf.Loaders {
+		for name, configs := range conf.Loaders {
 			var conf *telegraf.Config
-			for _, plugin := range plugins {
-				rl, err := createLoader(name, plugin, registry)
+			for _, config := range configs {
+				factory, ok := registry.Loaders[name]
+				if !ok {
+					return fmt.Errorf("unknown plugin: %s", name)
+				}
+
+				rl, err := models.NewRunningLoader(config, factory)
+				if err != nil {
+					// what do
+				}
 				rls = append(rls, rl)
 
 				watcher.WatchLoader(ctx, rl)
@@ -233,11 +194,17 @@ func (a *Agent) Run() error {
 				fmt.Println(rl.String())
 			}
 
-			for name, plugins := range conf.Inputs {
-				for _, plugin := range plugins {
-					ri, err := createInput(name, plugin, registry)
+			for name, configs := range conf.Inputs {
+				for _, config := range configs {
+					factory, ok := registry.Inputs[name]
+					if !ok {
+						return fmt.Errorf("unknown plugin: %s", name)
+					}
+
+					ri, err := models.NewRunningInput(config, factory)
 					if err != nil {
 						// what do
+						return err
 					}
 					ris = append(ris, ri)
 
@@ -245,9 +212,14 @@ func (a *Agent) Run() error {
 					fmt.Println(ri.String())
 				}
 			}
-			for name, plugins := range conf.Outputs {
-				for _, plugin := range plugins {
-					ro, err := createOutput(name, plugin, registry)
+			for name, configs := range conf.Outputs {
+				for _, config := range configs {
+					factory, ok := registry.Outputs[name]
+					if !ok {
+						return fmt.Errorf("unknown plugin: %s", name)
+					}
+
+					ro, err := models.NewRunningOutput(config, factory)
 					if err != nil {
 						// what do
 					}

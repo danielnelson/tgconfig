@@ -9,12 +9,20 @@ import (
 
 // RunningLoader exists for symmetry with the other Running classes.
 type RunningLoader struct {
-	Config *telegraf.LoaderConfig
+	Config *telegraf.CommonLoaderConfig
 	Loader telegraf.Loader
 }
 
-func NewRunningLoader(config *telegraf.LoaderConfig, loader telegraf.Loader) *RunningLoader {
-	return &RunningLoader{config, loader}
+func NewRunningLoader(
+	config *telegraf.LoaderConfig,
+	factory telegraf.PluginFactory,
+) (*RunningLoader, error) {
+	loader, err := CreateLoader(config.PluginConfig, factory)
+	if err != nil {
+		return nil, err
+	}
+
+	return &RunningLoader{config.Config, loader}, nil
 }
 
 func (rc *RunningLoader) String() string {
