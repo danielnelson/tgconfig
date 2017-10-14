@@ -7,27 +7,6 @@ import (
 	"github.com/influxdata/tgconfig"
 )
 
-type Plugins map[string]interface{}
-
-func Check(plugins Plugins) (Plugins, error) {
-	for name, factory := range plugins {
-		f := reflect.ValueOf(factory)
-		if f.Kind() != reflect.Func {
-			return nil, fmt.Errorf("invalid factory %s", name)
-		}
-
-		if f.Type().NumIn() != 1 {
-			return nil, fmt.Errorf("invalid arguments %s", name)
-		}
-
-		c := f.Type().In(0)
-		if c.Kind() != reflect.Ptr {
-			return nil, fmt.Errorf("invalid argument type %s", name)
-		}
-	}
-	return plugins, nil
-}
-
 func CreateInput(
 	config telegraf.PluginConfig,
 	factory telegraf.PluginFactory,
@@ -74,6 +53,25 @@ func CreateLoader(
 
 	switch plugin := plugin.(type) {
 	case telegraf.Loader:
+		return plugin, nil
+	}
+
+	switch err := err.(type) {
+	case error:
+		return nil, err
+	}
+
+	panic("Error loading plugin")
+}
+
+func CreateParser(
+	config telegraf.PluginConfig,
+	factory telegraf.PluginFactory,
+) (telegraf.Parser, error) {
+	plugin, err := createPlugin(config, factory)
+
+	switch plugin := plugin.(type) {
+	case telegraf.Parser:
 		return plugin, nil
 	}
 

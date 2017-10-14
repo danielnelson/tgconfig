@@ -3,10 +3,6 @@ package toml
 import (
 	"fmt"
 	"io"
-	"log"
-	"reflect"
-
-	"github.com/influxdata/tgconfig/models"
 
 	"github.com/BurntSushi/toml"
 
@@ -15,10 +11,10 @@ import (
 
 type parser struct {
 	md       toml.MetaData
-	registry *telegraf.ConfigRegistry
+	registry telegraf.ConfigRegistry
 }
 
-func NewParser(registry *telegraf.ConfigRegistry) *parser {
+func NewParser(registry telegraf.ConfigRegistry) *parser {
 	return &parser{registry: registry}
 }
 
@@ -74,19 +70,25 @@ func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*t
 
 	// Function on Registry?
 	// Don't call this loader anymore
-	factories, err := models.Check(p.registry.Inputs)
-	if err != nil {
-		return nil, err
-	}
+	// factories, err := models.Check(p.registry.Inputs)
+	// if err != nil {
+	// 	return nil, err
+	// }
 
 	for name, primitives := range inputs {
-		factory, ok := factories[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown input plugin: %s", name)
-		}
-
 		configs := make([]*telegraf.InputConfig, 0)
 		for _, primitive := range primitives {
+			pluginConfig, ok := p.registry.GetPluginConfig(telegraf.InputType, name)
+			if !ok {
+				return nil, fmt.Errorf("unknown input plugin: %s", name)
+			}
+
+			// Parse specific configuration
+			if err := p.md.PrimitiveDecode(primitive, pluginConfig); err != nil {
+				return nil, err
+			}
+
+			// Parse common configuration
 			commonConfig := &telegraf.CommonInputConfig{}
 			if err := p.md.PrimitiveDecode(primitive, commonConfig); err != nil {
 				return nil, err
@@ -99,14 +101,11 @@ func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*t
 				dataFormat = "influx"
 			}
 
-			var parserConfig telegraf.PluginConfig
-			parser, ok := p.registry.Parsers[dataFormat]
-			if ok {
-				parserConfig = p.loadConfig(primitive, parser)
+			// Parse parser configuration
+			parserConfig, ok := p.registry.GetPluginConfig(telegraf.ParserType, dataFormat)
+			if err := p.md.PrimitiveDecode(primitive, parserConfig); err != nil {
+				return nil, err
 			}
-
-			// Parse Input specific configuration
-			pluginConfig := p.loadConfig(primitive, factory)
 
 			plugin := &telegraf.InputConfig{
 				Config:       commonConfig,
@@ -123,26 +122,24 @@ func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*t
 func (p *parser) loadOutputs(outputs map[string][]toml.Primitive) (map[string][]*telegraf.OutputConfig, error) {
 	outputConfigs := make(map[string][]*telegraf.OutputConfig)
 
-	factories, err := models.Check(p.registry.Outputs)
-	if err != nil {
-		return nil, err
-	}
-
 	for name, primitives := range outputs {
-		factory, ok := factories[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown output plugin: %s", name)
-		}
-
 		configs := make([]*telegraf.OutputConfig, 0)
 		for _, primitive := range primitives {
+			pluginConfig, ok := p.registry.GetPluginConfig(telegraf.OutputType, name)
+			if !ok {
+				return nil, fmt.Errorf("unknown output plugin: %s", name)
+			}
+
+			// Parse specific configuration
+			if err := p.md.PrimitiveDecode(primitive, pluginConfig); err != nil {
+				return nil, err
+			}
+
+			// Parse common configuration
 			commonConfig := &telegraf.CommonOutputConfig{}
 			if err := p.md.PrimitiveDecode(primitive, commonConfig); err != nil {
 				return nil, err
 			}
-
-			// Parse Output specific configuration
-			pluginConfig := p.loadConfig(primitive, factory)
 
 			plugin := &telegraf.OutputConfig{
 				Config:       commonConfig,
@@ -158,26 +155,24 @@ func (p *parser) loadOutputs(outputs map[string][]toml.Primitive) (map[string][]
 func (p *parser) loadLoaders(loaders map[string][]toml.Primitive) (map[string][]*telegraf.LoaderConfig, error) {
 	loaderConfigs := make(map[string][]*telegraf.LoaderConfig, 0)
 
-	factories, err := models.Check(p.registry.Loaders)
-	if err != nil {
-		return nil, err
-	}
-
 	for name, primitives := range loaders {
-		factory, ok := factories[name]
-		if !ok {
-			return nil, fmt.Errorf("unknown loader plugin: %s", name)
-		}
-
 		configs := make([]*telegraf.LoaderConfig, 0)
 		for _, primitive := range primitives {
+			pluginConfig, ok := p.registry.GetPluginConfig(telegraf.LoaderType, name)
+			if !ok {
+				return nil, fmt.Errorf("unknown loader plugin: %s", name)
+			}
+
+			// Parse Loader specific configuration
+			if err := p.md.PrimitiveDecode(primitive, pluginConfig); err != nil {
+				return nil, err
+			}
+
+			// Parse common Loader configuration
 			commonConfig := &telegraf.CommonLoaderConfig{}
 			if err := p.md.PrimitiveDecode(primitive, commonConfig); err != nil {
 				return nil, err
 			}
-
-			// Parse Loader specific configuration
-			pluginConfig := p.loadConfig(primitive, factory)
 
 			plugin := &telegraf.LoaderConfig{
 				Config:       commonConfig,
@@ -188,20 +183,4 @@ func (p *parser) loadLoaders(loaders map[string][]toml.Primitive) (map[string][]
 		loaderConfigs[name] = configs
 	}
 	return loaderConfigs, nil
-}
-
-func (p *parser) loadConfig(prim toml.Primitive, factory interface{}) interface{} {
-	vfactory := reflect.ValueOf(factory)
-
-	// Get the Type of the first and only argument
-	configType := vfactory.Type().In(0)
-
-	// Create a new config struct
-	config := reflect.New(configType.Elem()).Interface()
-
-	// Parse TOML into config struct
-	if err := p.md.PrimitiveDecode(prim, config); err != nil {
-		log.Fatal(err)
-	}
-	return config
 }

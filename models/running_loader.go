@@ -14,9 +14,14 @@ type RunningLoader struct {
 }
 
 func NewRunningLoader(
+	name string,
 	config *telegraf.LoaderConfig,
-	factory telegraf.PluginFactory,
+	registry telegraf.FactoryRegistry,
 ) (*RunningLoader, error) {
+	factory, ok := registry.GetFactory(telegraf.LoaderType, name)
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
 	loader, err := CreateLoader(config.PluginConfig, factory)
 	if err != nil {
 		return nil, err
@@ -40,7 +45,7 @@ func (rc *RunningLoader) Name() string {
 
 func (rc *RunningLoader) Load(
 	ctx context.Context,
-	registry *telegraf.ConfigRegistry,
+	registry telegraf.ConfigRegistry,
 ) (*telegraf.Config, error) {
 	return rc.Loader.Load(ctx, registry)
 }

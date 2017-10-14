@@ -35,13 +35,13 @@ func NewAgent(flags *Flags) *Agent {
 	return &Agent{flags}
 }
 
-func createBuiltinLoader(path string, factory telegraf.PluginFactory) (*models.RunningLoader, error) {
+func createBuiltinLoader(path string, registry telegraf.FactoryRegistry) (*models.RunningLoader, error) {
 	config := &telegraf.LoaderConfig{
 		Config:       &telegraf.CommonLoaderConfig{},
 		PluginConfig: &toml.Config{Path: path},
 	}
 
-	return models.NewRunningLoader(config, factory)
+	return models.NewRunningLoader("toml", config, registry)
 }
 
 func createPlugin(config interface{}, factory interface{}) interface{} {
@@ -64,8 +64,17 @@ func (a *Agent) Run() error {
 		configfile = a.flags.Args[0]
 	}
 
-	factory := loaders.Loaders["toml"]
-	builtinLoader, err := createBuiltinLoader(configfile, factory)
+	// make factories own configs
+	registry, _ := models.NewFactories(
+		loaders.Loaders,
+		inputs.Inputs,
+		outputs.Outputs,
+		parsers.Parsers,
+	)
+	// call once or many times?
+	configr := registry.GetConfigRegistry()
+
+	builtinLoader, err := createBuiltinLoader(configfile, registry)
 	if err != nil {
 		return err
 	}
@@ -76,13 +85,6 @@ func (a *Agent) Run() error {
 	// don't provide a way to return config plugins.
 	// a plugin could theoretically chain load or whatever for redirection, but it has to load
 	// all the plugins.
-
-	registry := &telegraf.ConfigRegistry{
-		Loaders: loaders.Loaders,
-		Inputs:  inputs.Inputs,
-		Outputs: outputs.Outputs,
-		Parsers: parsers.Parsers,
-	}
 
 	var wg sync.WaitGroup
 
@@ -118,7 +120,7 @@ func (a *Agent) Run() error {
 		ctx, cancel := context.WithTimeout(ctx, 200*time.Second)
 		defer cancel()
 
-		conf, err := builtinLoader.Load(ctx, registry)
+		conf, err := builtinLoader.Load(ctx, configr)
 		if err != nil {
 			return err
 		}
@@ -138,12 +140,7 @@ func (a *Agent) Run() error {
 
 		for name, configs := range conf.Inputs {
 			for _, config := range configs {
-				factory, ok := registry.Inputs[name]
-				if !ok {
-					return fmt.Errorf("unknown plugin: %s", name)
-				}
-
-				ri, err := models.NewRunningInput(config, factory)
+				ri, err := models.NewRunningInput(name, config, registry)
 				if err != nil {
 					// what do
 					return err
@@ -156,12 +153,7 @@ func (a *Agent) Run() error {
 		}
 		for name, configs := range conf.Outputs {
 			for _, config := range configs {
-				factory, ok := registry.Outputs[name]
-				if !ok {
-					return fmt.Errorf("unknown plugin: %s", name)
-				}
-
-				ro, err := models.NewRunningOutput(config, factory)
+				ro, err := models.NewRunningOutput(name, config, registry)
 				if err != nil {
 					// what do
 				}
@@ -175,12 +167,7 @@ func (a *Agent) Run() error {
 		for name, configs := range conf.Loaders {
 			var conf *telegraf.Config
 			for _, config := range configs {
-				factory, ok := registry.Loaders[name]
-				if !ok {
-					return fmt.Errorf("unknown plugin: %s", name)
-				}
-
-				rl, err := models.NewRunningLoader(config, factory)
+				rl, err := models.NewRunningLoader(name, config, registry)
 				if err != nil {
 					// what do
 				}
@@ -188,7 +175,7 @@ func (a *Agent) Run() error {
 
 				watcher.WatchLoader(ctx, rl)
 
-				conf, err = rl.Load(ctx, registry)
+				conf, err = rl.Load(ctx, configr)
 				if err != nil {
 					return err
 				}
@@ -198,12 +185,7 @@ func (a *Agent) Run() error {
 
 			for name, configs := range conf.Inputs {
 				for _, config := range configs {
-					factory, ok := registry.Inputs[name]
-					if !ok {
-						return fmt.Errorf("unknown plugin: %s", name)
-					}
-
-					ri, err := models.NewRunningInput(config, factory)
+					ri, err := models.NewRunningInput(name, config, registry)
 					if err != nil {
 						// what do
 						return err
@@ -216,12 +198,7 @@ func (a *Agent) Run() error {
 			}
 			for name, configs := range conf.Outputs {
 				for _, config := range configs {
-					factory, ok := registry.Outputs[name]
-					if !ok {
-						return fmt.Errorf("unknown plugin: %s", name)
-					}
-
-					ro, err := models.NewRunningOutput(config, factory)
+					ro, err := models.NewRunningOutput(name, config, registry)
 					if err != nil {
 						// what do
 					}

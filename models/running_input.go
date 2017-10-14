@@ -17,24 +17,36 @@ type RunningInput struct {
 }
 
 func NewRunningInput(
+	name string,
 	config *telegraf.InputConfig,
-	factory telegraf.PluginFactory,
+	registry telegraf.FactoryRegistry,
 ) (*RunningInput, error) {
+	factory, ok := registry.GetFactory(telegraf.InputType, name)
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
 	input, err := CreateInput(config.PluginConfig, factory)
 	if err != nil {
 		return nil, err
 	}
 
-	// switch input := input.(type) {
-	// case telegraf.ParserInput:
-	// 	// create parser
-
-	// 	parser, err := CreateParser(config.ParserConfig, factory)
-	// 	if err != nil {
-	// 		return nil, err
-	// 	}
-	// 	input.SetParser(parser)
-	// }
+	switch input := input.(type) {
+	case telegraf.ParserInput:
+		parserName := "influx"
+		if config.Config.DataFormat != "" {
+			parserName = config.Config.DataFormat
+		}
+		// how do we know what parser to load?  based on data_format?
+		factory, ok := registry.GetFactory(telegraf.ParserType, parserName)
+		if !ok {
+			return nil, fmt.Errorf("unknown plugin: %s", name)
+		}
+		parser, err := CreateParser(config.ParserConfig, factory)
+		if err != nil {
+			return nil, err
+		}
+		input.SetParser(parser)
+	}
 
 	return &RunningInput{config.Config, input}, nil
 }

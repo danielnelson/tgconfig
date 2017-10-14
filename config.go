@@ -4,6 +4,15 @@ import (
 	"fmt"
 )
 
+type PluginType int
+
+const (
+    InputType PluginType = iota
+    OutputType
+    LoaderType
+    ParserType
+)
+
 // FilterConfig contains the standard filtering configuration.  We may need
 // one of these for each of inputs, processors, aggregators, outputs.
 type FilterConfig struct {
@@ -106,40 +115,18 @@ type Config struct {
 	Loaders map[string][]*LoaderConfig
 }
 
-type PluginRegistry interface {
-	GetInputPluginConfig(string) PluginConfig
-	GetOutputPluginConfig(string) PluginConfig
-	GetLoaderPluginConfig(string) PluginConfig
-	GetParserPluginConfig(string) PluginConfig
+type ConfigRegistry interface {
+    // abstract factory pattern?
 
-	GetInputFactory(string) PluginFactory
-	GetOutputFactory(string) PluginFactory
-	GetLoaderFactory(string) PluginFactory
-	GetParserFactory(string) PluginFactory
-
-
-	// maybe an enum?
-	// maybe two interfaces
-
-	// c := GetPluginConfig("input", "example")
-	// err := p.md.PrimitiveDecode(primitive, c)
-	GetPluginConfig(pluginType string, name string) PluginConfig
-
-	// f := GetFactory("input", "example")
-	// input, err := f(config)
-	GetFactory(pluginType string, name string) PluginFactory
+    // c := GetPluginConfig(InputType, "example")
+    // err := p.md.PrimitiveDecode(primitive, c)
+    GetPluginConfig(pluginType PluginType, name string) (PluginConfig, bool)
 }
 
-// ConfigRegistry holds the set of available plugins.  This provides a layer of
-// indirection so that you can define a custom set of plugins.
-//
-// plugin_name -> plugin_factory
-// i.e.: "cpu" -> cpu.New(*cpu.Config) (Input, error)
-type ConfigRegistry struct {
-	Loaders map[string]PluginFactory
-	Inputs  map[string]PluginFactory
-	Outputs map[string]PluginFactory
-	Parsers map[string]PluginFactory
+type FactoryRegistry interface {
+    // f := GetFactory(InputType, "example")
+    // input, err := f(config)
+    GetFactory(pluginType PluginType, name string) (PluginFactory, bool)
+
+    GetConfigRegistry() ConfigRegistry
 }
-
-

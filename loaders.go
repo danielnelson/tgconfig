@@ -16,7 +16,7 @@ type Loader interface {
 	Watch(context.Context) (Waiter, error)
 
 	// Should we remove registry?  Would need to move it to the New function.
-	Load(context.Context, *ConfigRegistry) (*Config, error)
+	Load(context.Context, ConfigRegistry) (*Config, error)
 }
 
 // Should this be WatchWaiter?

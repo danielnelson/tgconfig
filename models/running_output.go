@@ -18,9 +18,14 @@ type RunningOutput struct {
 }
 
 func NewRunningOutput(
+	name string,
 	config *telegraf.OutputConfig,
-	factory telegraf.PluginFactory,
+	registry telegraf.FactoryRegistry,
 ) (*RunningOutput, error) {
+	factory, ok := registry.GetFactory(telegraf.OutputType, name)
+	if !ok {
+		return nil, fmt.Errorf("unknown plugin: %s", name)
+	}
 	output, err := CreateOutput(config.PluginConfig, factory)
 	if err != nil {
 		return nil, err

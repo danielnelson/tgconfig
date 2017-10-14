@@ -45,7 +45,7 @@ func (c *HTTP) Name() string {
 	return HTTPName
 }
 
-func (c *HTTP) Load(ctx context.Context, registry *telegraf.ConfigRegistry) (*telegraf.Config, error) {
+func (c *HTTP) Load(ctx context.Context, registry telegraf.ConfigRegistry) (*telegraf.Config, error) {
 	url := *c.origin
 	url.Path = "/config"
 	req, err := http.NewRequest("GET", url.String(), http.NoBody)
