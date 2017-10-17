@@ -1,8 +1,6 @@
 package models
 
 import (
-	"fmt"
-
 	telegraf "github.com/influxdata/tgconfig"
 )
 
@@ -20,11 +18,8 @@ func NewRunningInput(
 	config *telegraf.InputConfig,
 	registry telegraf.FactoryRegistry,
 ) (*RunningInput, error) {
-	factory, ok := registry.GetFactory(telegraf.InputType, name)
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	input, err := CreateInput(config.PluginConfig, factory)
+	input, err := registry.CreateInput(
+		telegraf.InputType, name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -35,12 +30,8 @@ func NewRunningInput(
 		if config.Config.DataFormat != "" {
 			parserName = config.Config.DataFormat
 		}
-		// how do we know what parser to load?  based on data_format?
-		factory, ok := registry.GetFactory(telegraf.ParserType, parserName)
-		if !ok {
-			return nil, fmt.Errorf("unknown plugin: %s", name)
-		}
-		parser, err := CreateParser(config.ParserConfig, factory)
+		parser, err := registry.CreateParser(
+			telegraf.ParserType, parserName, config.ParserConfig)
 		if err != nil {
 			return nil, err
 		}

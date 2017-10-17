@@ -98,7 +98,11 @@ type Config struct {
 }
 
 type FactoryRegistry interface {
-	GetFactory(pluginType PluginType, name string) (PluginFactory, bool)
+	CreateInput(pt PluginType, name string, c PluginConfig) (Input, error)
+	CreateOutput(pt PluginType, name string, c PluginConfig) (Output, error)
+	CreateParser(pt PluginType, name string, c PluginConfig) (Parser, error)
+	CreateLoader(pt PluginType, name string, c PluginConfig) (Loader, error)
+
 	GetConfigRegistry() ConfigRegistry
 }
 

@@ -1,8 +1,6 @@
 package models
 
 import (
-	"fmt"
-
 	telegraf "github.com/influxdata/tgconfig"
 )
 
@@ -21,11 +19,8 @@ func NewRunningOutput(
 	config *telegraf.OutputConfig,
 	registry telegraf.FactoryRegistry,
 ) (*RunningOutput, error) {
-	factory, ok := registry.GetFactory(telegraf.OutputType, name)
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	output, err := CreateOutput(config.PluginConfig, factory)
+	output, err := registry.CreateOutput(
+		telegraf.OutputType, name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,6 @@ package models
 
 import (
 	"context"
-	"fmt"
 
 	telegraf "github.com/influxdata/tgconfig"
 )
@@ -18,11 +17,8 @@ func NewRunningLoader(
 	config *telegraf.LoaderConfig,
 	registry telegraf.FactoryRegistry,
 ) (*RunningLoader, error) {
-	factory, ok := registry.GetFactory(telegraf.LoaderType, name)
-	if !ok {
-		return nil, fmt.Errorf("unknown plugin: %s", name)
-	}
-	loader, err := CreateLoader(config.PluginConfig, factory)
+	loader, err := registry.CreateLoader(
+		telegraf.LoaderType, name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
