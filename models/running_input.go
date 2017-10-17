@@ -2,9 +2,8 @@ package models
 
 import (
 	"fmt"
-	"strings"
 
-	"github.com/influxdata/tgconfig"
+	telegraf "github.com/influxdata/tgconfig"
 )
 
 // RunningInput ensures measurement filtering is applied correctly to all
@@ -49,15 +48,4 @@ func NewRunningInput(
 	}
 
 	return &RunningInput{config.Config, input}, nil
-}
-
-func (ri *RunningInput) String() string {
-	lines := []string{}
-	switch s := ri.Input.(type) {
-	case fmt.Stringer:
-		lines = append(lines, s.String())
-	}
-
-	lines = append(lines, ri.Config.String())
-	return strings.Join(lines, "\n")
 }

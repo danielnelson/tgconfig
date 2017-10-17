@@ -1,9 +1,6 @@
 package example2
 
 import (
-	"fmt"
-	"strings"
-
 	telegraf "github.com/influxdata/tgconfig"
 )
 
@@ -29,11 +26,4 @@ func New(config *Config) (telegraf.Input, error) {
 
 func (p *Example2) Gather() error {
 	return nil
-}
-
-func (p *Example2) String() string {
-	return strings.Join([]string{
-		"Input: " + Name,
-		fmt.Sprintf("  value:%s", p.Value),
-	}, "\n")
 }

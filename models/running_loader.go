@@ -30,17 +30,8 @@ func NewRunningLoader(
 	return &RunningLoader{config.Config, loader}, nil
 }
 
-func (rc *RunningLoader) String() string {
-	switch s := rc.Loader.(type) {
-	case fmt.Stringer:
-		return s.String()
-	default:
-		return ""
-	}
-}
-
-func (rc *RunningLoader) Name() string {
-	return rc.Loader.Name()
+func (rc *RunningLoader) Watch(ctx context.Context) (telegraf.Waiter, error) {
+	return rc.Loader.Watch(ctx)
 }
 
 func (rc *RunningLoader) Load(
@@ -48,8 +39,4 @@ func (rc *RunningLoader) Load(
 	registry telegraf.ConfigRegistry,
 ) (*telegraf.Config, error) {
 	return rc.Loader.Load(ctx, registry)
-}
-
-func (rc *RunningLoader) Watch(ctx context.Context) (telegraf.Waiter, error) {
-	return rc.Loader.Watch(ctx)
 }

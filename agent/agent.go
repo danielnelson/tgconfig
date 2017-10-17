@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
@@ -127,7 +129,7 @@ func (a *Agent) Run() error {
 
 		rls = append(rls, builtinLoader)
 
-		fmt.Println(builtinLoader.String())
+		fmt.Printf(FormatPlugin(builtinLoader))
 
 		// Begin monitoring all plugins for changes, by monitoring before
 		// loading we ensure the config can never be stale.
@@ -147,8 +149,7 @@ func (a *Agent) Run() error {
 				}
 				ris = append(ris, ri)
 
-				// Debugging
-				fmt.Println(ri.String())
+				fmt.Printf(FormatPlugin(ri))
 			}
 		}
 		for name, configs := range conf.Outputs {
@@ -159,8 +160,7 @@ func (a *Agent) Run() error {
 				}
 				ros = append(ros, ro)
 
-				// Debugging
-				fmt.Println(ro.String())
+				fmt.Printf(FormatPlugin(ro))
 			}
 		}
 
@@ -180,7 +180,7 @@ func (a *Agent) Run() error {
 					return err
 				}
 
-				fmt.Println(rl.String())
+				fmt.Printf(FormatPlugin(rl))
 			}
 
 			for name, configs := range conf.Inputs {
@@ -192,8 +192,7 @@ func (a *Agent) Run() error {
 					}
 					ris = append(ris, ri)
 
-					// Debugging
-					fmt.Println(ri.String())
+					fmt.Printf(FormatPlugin(ri))
 				}
 			}
 			for name, configs := range conf.Outputs {
@@ -204,8 +203,7 @@ func (a *Agent) Run() error {
 					}
 					ros = append(ros, ro)
 
-					// Debugging
-					fmt.Println(ro.String())
+					fmt.Printf(FormatPlugin(ro))
 				}
 			}
 		}
@@ -261,15 +259,13 @@ func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader)
 		err := waiter.Wait()
 
 		if ctx.Err() == context.Canceled {
-			fmt.Printf("cancelled: %s\n", loader.Name())
+			fmt.Printf("cancelled: %T\n", loader)
 		} else if ctx.Err() == context.DeadlineExceeded {
-			fmt.Printf("timeout: %s\n", loader.Name())
-		} else if err == telegraf.ReloadConfig {
-			fmt.Printf("%s: %s\n", err, loader.Name())
+			fmt.Printf("timeout: %T\n", loader)
 		} else if err != nil {
-			fmt.Printf("%s: %s\n", err, loader.Name())
+			fmt.Printf("%s: %T\n", err, loader)
 		} else {
-			fmt.Printf("monitor completed without error: %s\n", loader.Name())
+			fmt.Printf("monitor completed without error: %T\n", loader)
 		}
 		m.once.Do(func() { close(m.done) })
 	}()
@@ -307,4 +303,16 @@ func (a *Agent) Shutdown() {
 	// Run Inputs acks
 	// Clear all inputs, processors, aggregators, outputs
 	// Stop
+}
+
+func FormatPlugin(p interface{}) string {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetIndent("", "    ")
+	err := enc.Encode(p)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return b.String()
+
 }

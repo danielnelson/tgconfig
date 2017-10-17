@@ -1,9 +1,6 @@
 package example
 
 import (
-	"fmt"
-	"strings"
-
 	telegraf "github.com/influxdata/tgconfig"
 )
 
@@ -35,14 +32,4 @@ func (p *Example) Gather() error {
 
 func (p *Example) SetParser(parser telegraf.Parser) {
 	p.parser = parser
-}
-
-// Debugging
-func (p *Example) String() string {
-	return strings.Join(
-		[]string{
-			"Input: " + Name,
-			fmt.Sprintf("  value:%s", p.Config.Value),
-			fmt.Sprintf("  parser:%T", p.parser),
-		}, "\n")
 }

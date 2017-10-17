@@ -2,25 +2,23 @@ package telegraf
 
 import (
 	"context"
-	"errors"
 )
 
-var ReloadConfig = errors.New("reload config")
-
-// Loader is a config plugin, corresponds to the Input or Output struct
+// Loader is the interface for a plugin that loads a Config.
 type Loader interface {
-	Name() string
-
-	// Watch begins watching for updates, once this function returns the watch
-	// is established.
+	// Watch establishes watching for updates.
+	//
+	// Does not return until the watch is established or an error occurs.
 	Watch(context.Context) (Waiter, error)
 
-	// Should we remove registry?  Would need to move it to the New function.
+	// Load loads the Config.
 	Load(context.Context, ConfigRegistry) (*Config, error)
 }
 
 // Should this be WatchWaiter?
+//
+// Waiter allows you to wait for a watch to complete.
 type Waiter interface {
-	// Wait blocks until the watch has completed
+	// Wait blocks until the watch has completed.
 	Wait() error
 }

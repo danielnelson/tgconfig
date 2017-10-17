@@ -7,11 +7,16 @@ import (
 type PluginType int
 
 const (
-    InputType PluginType = iota
-    OutputType
-    LoaderType
-    ParserType
+	InputType PluginType = iota
+	OutputType
+	LoaderType
+	ParserType
 )
+
+// AgentConfig contains the Agent configuration
+type AgentConfig struct {
+	Interval int `toml:"interval"`
+}
 
 // FilterConfig contains the standard filtering configuration.  We may need
 // one of these for each of inputs, processors, aggregators, outputs.
@@ -19,36 +24,24 @@ type FilterConfig struct {
 	NameOverride string `toml:"name_override"`
 }
 
-// ParserConfig is a new method for defining parsers.  Still needs some work.
+// ParserConfig is the shared configuration for Parsers.
 type ParserConfig struct {
 	DataFormat string `toml:"data_format"`
 }
 
-// AgentConfig contains the Agent configuration
-type AgentConfig struct {
-	Interval int `toml:"interval"`
-}
-
-// InputConfig is the required config for all inputs.
-//
-// This configuration is generally used by the Running input.  This has
-// upsides and downsides:
-// - pro:
-//   - This configuration is hidden from the plugin; reducing clutter and
-//     temptation to misuse.
-//   - Plugin author does not need to remember to add standard options.
-// - con:
-//   - Breaks the product that a Config plugin must produce into two parts.
+// CommonInputConfig is the common config for all Inputs.
 type CommonInputConfig struct {
 	FilterConfig
 	ParserConfig
-
-	Config interface{}
 }
 
-func (c *CommonInputConfig) String() string {
-	return fmt.Sprintf("  input:name_override: %s", c.NameOverride)
-}
+// func (c *CommonInputConfig) String() string {
+// 	var b bytes.Buffer
+// 	enc := toml.NewEncoder(&b)
+// 	enc.Encode(c)
+// 	return b.String()
+// 	// return fmt.Sprintf("  input:name_override: %s", c.NameOverride)
+// }
 
 // OutputConfig is the required config for all outputs.
 //
@@ -64,10 +57,7 @@ func (c *CommonOutputConfig) String() string {
 // LoaderConfig is the config for any loaders.
 //
 // Just here for symmetry for now
-type CommonLoaderConfig struct{}
-
-func (c *CommonLoaderConfig) String() string {
-	return ""
+type CommonLoaderConfig struct {
 }
 
 // Config struct for plugin
@@ -82,18 +72,10 @@ type InputConfig struct {
 	ParserConfig PluginConfig
 }
 
-func (c *InputConfig) String() string {
-	return ""
-}
-
 // OutputPlugin packages the global settings with the Output instance.
 type OutputConfig struct {
 	Config       *CommonOutputConfig
 	PluginConfig PluginConfig
-}
-
-func (c *OutputConfig) String() string {
-	return ""
 }
 
 // LoaderPlugin packages the global Loader config with the Loader config.
@@ -115,18 +97,11 @@ type Config struct {
 	Loaders map[string][]*LoaderConfig
 }
 
-type ConfigRegistry interface {
-    // abstract factory pattern?
-
-    // c := GetPluginConfig(InputType, "example")
-    // err := p.md.PrimitiveDecode(primitive, c)
-    GetPluginConfig(pluginType PluginType, name string) (PluginConfig, bool)
+type FactoryRegistry interface {
+	GetFactory(pluginType PluginType, name string) (PluginFactory, bool)
+	GetConfigRegistry() ConfigRegistry
 }
 
-type FactoryRegistry interface {
-    // f := GetFactory(InputType, "example")
-    // input, err := f(config)
-    GetFactory(pluginType PluginType, name string) (PluginFactory, bool)
-
-    GetConfigRegistry() ConfigRegistry
+type ConfigRegistry interface {
+	GetPluginConfig(pluginType PluginType, name string) (PluginConfig, bool)
 }
