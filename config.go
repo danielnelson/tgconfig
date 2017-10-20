@@ -1,9 +1,6 @@
 package telegraf
 
-import (
-	"fmt"
-)
-
+// PluginType is an enum of the different plugin types.
 type PluginType int
 
 const (
@@ -29,67 +26,47 @@ type ParserConfig struct {
 	DataFormat string `toml:"data_format"`
 }
 
-// CommonInputConfig is the common config for all Inputs.
+// CommonInputConfig is the configuration options that can be set on any Input.
 type CommonInputConfig struct {
 	FilterConfig
 	ParserConfig
 }
 
-// func (c *CommonInputConfig) String() string {
-// 	var b bytes.Buffer
-// 	enc := toml.NewEncoder(&b)
-// 	enc.Encode(c)
-// 	return b.String()
-// 	// return fmt.Sprintf("  input:name_override: %s", c.NameOverride)
-// }
-
-// OutputConfig is the required config for all outputs.
-//
-// This configurations is generally used by the RunningOutput.
+// CommonOutputConfig is the configuration options that can be set on any Output.
 type CommonOutputConfig struct {
 	FilterConfig
 }
 
-func (c *CommonOutputConfig) String() string {
-	return fmt.Sprintf("  output:name_override: %s", c.NameOverride)
-}
-
-// LoaderConfig is the config for any loaders.
-//
-// Just here for symmetry for now
+// CommonLoaderConfig is the configuration options that can be set on any Loader.
 type CommonLoaderConfig struct {
 }
 
-// Config struct for plugin
+// PluginConfig is a config struct for plugin.
 type PluginConfig = interface{}
 
-// Factory function for plugin: func (*PluginConfig) (Plugin, error)
+// PluginFactory function for creating plugins: func (*PluginConfig) (Plugin, error)
 type PluginFactory = interface{}
 
+// InputConfig is all configuration needed to create an Input.
 type InputConfig struct {
 	Config       *CommonInputConfig
 	PluginConfig PluginConfig
 	ParserConfig PluginConfig
 }
 
-// OutputPlugin packages the global settings with the Output instance.
+// OutputConfig is all configuration needed to create an Output.
 type OutputConfig struct {
 	Config       *CommonOutputConfig
 	PluginConfig PluginConfig
 }
 
-// LoaderPlugin packages the global Loader config with the Loader config.
-//
-// LoaderPlugin exists for symmetry with InputPlugin/OutputPlugin.  If a
-// LoaderConfig was introduced it would be stored here.
+// LoaderConfig is all configuration needed to create an Loader.
 type LoaderConfig struct {
 	Config       *CommonLoaderConfig
 	PluginConfig PluginConfig
 }
 
-// Config is the top level configuration struct.
-//
-// Loader plugins build this struct.
+// Config is the full set of loadable configuration.
 type Config struct {
 	Agent   AgentConfig
 	Inputs  map[string][]*InputConfig
@@ -97,6 +74,7 @@ type Config struct {
 	Loaders map[string][]*LoaderConfig
 }
 
+// FactoryRegistry is an interface that can create plugins or config structs.
 type FactoryRegistry interface {
 	CreateInput(pt PluginType, name string, c PluginConfig) (Input, error)
 	CreateOutput(pt PluginType, name string, c PluginConfig) (Output, error)
@@ -106,6 +84,7 @@ type FactoryRegistry interface {
 	GetConfigRegistry() ConfigRegistry
 }
 
+// ConfigRegistry is an interface that can create empty config structs.
 type ConfigRegistry interface {
 	GetPluginConfig(pluginType PluginType, name string) (PluginConfig, bool)
 }
