@@ -25,12 +25,8 @@ type Config struct {
 	Directory string
 }
 
-func New(config *Config) (telegraf.Loader, error) {
-	return &Toml{Config: *config}, nil
-}
-
-func (c *Toml) Name() string {
-	return Name
+func New(config *Config) ([]telegraf.Loader, error) {
+	return []telegraf.Loader{&Toml{Config: *config}}, nil
 }
 
 func (c *Toml) Load(ctx context.Context, registry telegraf.ConfigRegistry) (*telegraf.Config, error) {
@@ -75,9 +71,4 @@ func NewSignalWaiter(ctx context.Context) (*SignalWaiter, error) {
 func (w *SignalWaiter) Wait() error {
 	w.wg.Wait()
 	return w.ctx.Err()
-}
-
-// Debugging
-func (c *Toml) String() string {
-	return "Config: toml"
 }

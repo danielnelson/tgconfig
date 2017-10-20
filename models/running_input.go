@@ -13,30 +13,34 @@ type RunningInput struct {
 	Input  telegraf.Input
 }
 
-func NewRunningInput(
+func NewRunningInputs(
 	name string,
 	config *telegraf.InputConfig,
-	registry telegraf.FactoryRegistry,
-) (*RunningInput, error) {
-	input, err := registry.CreateInput(
-		telegraf.InputType, name, config.PluginConfig)
+	registry telegraf.Registry,
+) ([]*RunningInput, error) {
+	inputs, err := registry.CreateInputs(name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	switch input := input.(type) {
-	case telegraf.ParserInput:
-		parserName := "influx"
-		if config.Config.DataFormat != "" {
-			parserName = config.Config.DataFormat
+	for _, input := range inputs {
+		switch input := input.(type) {
+		case telegraf.ParserInput:
+			parserName := "influx"
+			if config.Config.DataFormat != "" {
+				parserName = config.Config.DataFormat
+			}
+			parser, err := registry.CreateParser(parserName, config.ParserConfig)
+			if err != nil {
+				return nil, err
+			}
+			input.SetParser(parser)
 		}
-		parser, err := registry.CreateParser(
-			telegraf.ParserType, parserName, config.ParserConfig)
-		if err != nil {
-			return nil, err
-		}
-		input.SetParser(parser)
 	}
 
-	return &RunningInput{config.Config, input}, nil
+	r := make([]*RunningInput, len(inputs))
+	for i, input := range inputs {
+		r[i] = &RunningInput{config.Config, input}
+	}
+	return r, nil
 }

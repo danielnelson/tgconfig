@@ -22,7 +22,7 @@ type HTTP struct {
 	client *http.Client
 }
 
-func NewHTTP(config *HTTPConfig) (telegraf.Loader, error) {
+func NewHTTP(config *HTTPConfig) ([]telegraf.Loader, error) {
 	origin, err := url.Parse(config.Origin)
 	if err != nil {
 		return nil, err
@@ -38,11 +38,7 @@ func NewHTTP(config *HTTPConfig) (telegraf.Loader, error) {
 		origin: origin,
 		client: client,
 	}
-	return http, nil
-}
-
-func (c *HTTP) Name() string {
-	return HTTPName
+	return []telegraf.Loader{http}, nil
 }
 
 func (c *HTTP) Load(ctx context.Context, registry telegraf.ConfigRegistry) (*telegraf.Config, error) {
@@ -101,9 +97,4 @@ func (w *HTTPWaiter) Wait() error {
 		return err
 	}
 	return w.ctx.Err()
-}
-
-// Debugging
-func (c *HTTP) String() string {
-	return "Config: http"
 }

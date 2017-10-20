@@ -10,20 +10,28 @@ import (
 type RunningLoader struct {
 	Config *telegraf.CommonLoaderConfig
 	Loader telegraf.Loader
+	Name   string
 }
 
-func NewRunningLoader(
+func NewRunningLoaders(
 	name string,
 	config *telegraf.LoaderConfig,
-	registry telegraf.FactoryRegistry,
-) (*RunningLoader, error) {
-	loader, err := registry.CreateLoader(
-		telegraf.LoaderType, name, config.PluginConfig)
+	registry telegraf.Registry,
+) ([]*RunningLoader, error) {
+	loaders, err := registry.CreateLoaders(name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	return &RunningLoader{config.Config, loader}, nil
+	r := make([]*RunningLoader, len(loaders))
+	for i, loader := range loaders {
+		r[i] = &RunningLoader{
+			Config: config.Config,
+			Loader: loader,
+			Name:   name,
+		}
+	}
+	return r, nil
 }
 
 func (rc *RunningLoader) Watch(ctx context.Context) (telegraf.Waiter, error) {

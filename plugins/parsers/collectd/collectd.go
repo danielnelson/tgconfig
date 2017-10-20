@@ -20,6 +20,6 @@ func (i *Collectd) Parse(buf []byte) ([]telegraf.Metric, error) {
 	return []telegraf.Metric{}, nil
 }
 
-func New(config *Config) (*Collectd, error) {
+func New(config *Config) (telegraf.Parser, error) {
 	return &Collectd{}, nil
 }

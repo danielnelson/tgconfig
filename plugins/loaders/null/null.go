@@ -21,10 +21,6 @@ func (l *Null) Load(ctx context.Context, registry telegraf.ConfigRegistry) (*tel
 	return &telegraf.Config{}, nil
 }
 
-func (l *Null) Name() string {
-	return Name
-}
-
 func (l *Null) Watch(ctx context.Context) (telegraf.Waiter, error) {
 	return NewNullWaiter(ctx)
 }
@@ -53,11 +49,6 @@ func (w *NullWaiter) Wait() error {
 	return w.ctx.Err()
 }
 
-// Debugging
-func (l *Null) String() string {
-	return "Config: null"
-}
-
-func New(config *Config) (telegraf.Loader, error) {
-	return &Null{}, nil
+func New(config *Config) ([]telegraf.Loader, error) {
+	return []telegraf.Loader{&Null{}}, nil
 }

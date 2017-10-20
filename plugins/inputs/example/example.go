@@ -19,8 +19,8 @@ type Example struct {
 }
 
 // New creates an Example from a Config.
-func New(config *Config) (telegraf.Input, error) {
-	return &Example{Config: *config}, nil
+func New(config *Config) ([]telegraf.Input, error) {
+	return []telegraf.Input{&Example{Config: *config}}, nil
 }
 
 func (p *Example) Gather() error {

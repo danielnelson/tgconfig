@@ -4,6 +4,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/influxdata/tgconfig/agent"
 
@@ -12,6 +13,7 @@ import (
 )
 
 var fDebug = flag.Bool("debug", false, "turn on debug logging")
+var fRunTimeout = flag.Int("run-timeout", 0, "run for this many seconds")
 
 func main() {
 	// Parse cli flags; these can never be modified, any other piece of
@@ -26,8 +28,18 @@ func main() {
 		Args:  args,
 	}
 
-	agent := agent.NewAgent(flags)
-	err := agent.Run()
+	fmt.Println(*fRunTimeout)
+	if fRunTimeout != nil {
+		flags.RunTimeout = time.Duration(*fRunTimeout) * time.Second
+	}
+
+	agent, err := agent.NewAgent(flags)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+
+	err = agent.Run()
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)

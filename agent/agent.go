@@ -22,28 +22,64 @@ import (
 
 // Agent represents the main event loop
 type Agent struct {
-	flags *Flags
+	flags      *Flags
+	registry   telegraf.Registry
+	mainLoader *models.RunningLoader
 }
 
 // Flags are the initialization options that cannot be changed
 //
 // The Agent also loads an AgentConfig which can be modified during runtime.
 type Flags struct {
-	Debug bool
-	Args  []string
+	Debug      bool
+	RunTimeout time.Duration
+	Args       []string
 }
 
-func NewAgent(flags *Flags) *Agent {
-	return &Agent{flags}
+func NewAgent(flags *Flags) (*Agent, error) {
+	registry, err := models.NewRegistry(
+		loaders.Loaders,
+		inputs.Inputs,
+		outputs.Outputs,
+		parsers.Parsers,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Load the base configuration; required and always using the toml config
+	// plugin.  This file might contain as little as another config plugin.
+	// Global tags need to be passed along.
+	var configfile string
+	if len(flags.Args) > 0 {
+		configfile = flags.Args[0]
+	}
+
+	mainLoader, err := createMainLoader(configfile, registry)
+	if err != nil {
+		return nil, err
+	}
+
+	agent := &Agent{
+		flags:      flags,
+		registry:   registry,
+		mainLoader: mainLoader,
+	}
+
+	return agent, nil
 }
 
-func createBuiltinLoader(path string, registry telegraf.FactoryRegistry) (*models.RunningLoader, error) {
+func createMainLoader(path string, registry telegraf.Registry) (*models.RunningLoader, error) {
 	config := &telegraf.LoaderConfig{
 		Config:       &telegraf.CommonLoaderConfig{},
 		PluginConfig: &toml.Config{Path: path},
 	}
 
-	return models.NewRunningLoader("toml", config, registry)
+	loaders, err := models.NewRunningLoaders("toml", config, registry)
+	if err != nil {
+		return nil, err
+	}
+	return loaders[0], nil
 }
 
 func createPlugin(config interface{}, factory interface{}) interface{} {
@@ -56,31 +92,36 @@ func createPlugin(config interface{}, factory interface{}) interface{} {
 	return plugin
 }
 
+type Pipeline struct {
+	Acc     telegraf.Accumulator
+	Inputs  []*models.RunningInput
+	Outputs []*models.RunningOutput
+	Loaders []*models.RunningLoader
+}
+
+func NewPipeline() *Pipeline {
+	p := &Pipeline{}
+	p.Acc = &models.Accumulator{}
+	p.Inputs = make([]*models.RunningInput, 0)
+	p.Outputs = make([]*models.RunningOutput, 0)
+	p.Loaders = make([]*models.RunningLoader, 0)
+	return p
+}
+
+func (p *Pipeline) AddInputs(inputs ...*models.RunningInput) {
+	p.Inputs = append(p.Inputs, inputs...)
+}
+
+func (p *Pipeline) AddOutputs(outputs ...*models.RunningOutput) {
+	p.Outputs = append(p.Outputs, outputs...)
+}
+
+func (p *Pipeline) AddLoaders(loaders ...*models.RunningLoader) {
+	p.Loaders = append(p.Loaders, loaders...)
+}
+
 // Run starts the main event loop
 func (a *Agent) Run() error {
-	// Load the base configuration; required and always using the toml config
-	// plugin.  This file might contain as little as another config plugin.
-	// Global tags need to be passed along.
-	var configfile string
-	if len(a.flags.Args) > 0 {
-		configfile = a.flags.Args[0]
-	}
-
-	// make factories own configs
-	registry, _ := models.NewFactories(
-		loaders.Loaders,
-		inputs.Inputs,
-		outputs.Outputs,
-		parsers.Parsers,
-	)
-	// call once or many times?
-	configr := registry.GetConfigRegistry()
-
-	builtinLoader, err := createBuiltinLoader(configfile, registry)
-	if err != nil {
-		return err
-	}
-
 	// dealing with recursion:
 	// - only local toml can contain more config plugins? yes but...
 	// - could do a top level parse and pass remaining to plugins. could only do with top toml
@@ -111,118 +152,44 @@ func (a *Agent) Run() error {
 		sigcancel()
 	}()
 
-	for {
-		var ris = make([]*models.RunningInput, 0)
-		var ros = make([]*models.RunningOutput, 0)
-		var rls = make([]*models.RunningLoader, 0)
-
-		// !! Run for maximum amount of time; this is for development reasons but
-		// maybe it should become an official option?  Although we probably
-		// should exclude config loading time.
-		ctx, cancel := context.WithTimeout(ctx, 200*time.Second)
+	// Might want another timeout for run-timeout after loaded
+	if a.flags.RunTimeout > time.Second*0 {
+		fmt.Printf("Setting run timeout: %s\n", a.flags.RunTimeout)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, a.flags.RunTimeout)
 		defer cancel()
+	}
 
-		conf, err := builtinLoader.Load(ctx, configr)
+	for {
+		var watcher = NewWatcher()
+		pipeline, err := a.LoadPipeline(ctx, watcher)
 		if err != nil {
-			return err
+			fmt.Println(err)
+			break
 		}
 
-		rls = append(rls, builtinLoader)
-
-		fmt.Printf(FormatPlugin(builtinLoader))
-
-		// Begin monitoring all plugins for changes, by monitoring before
-		// loading we ensure the config can never be stale.
-		//
-		// !! We don't want to continue until all are started, but the current
-		// interface doesn't allow us to know when this happened.
-		// var watcher = newMonitor()
-		var watcher = newWatcher()
-		watcher.WatchLoader(ctx, builtinLoader)
-
-		for name, configs := range conf.Inputs {
-			for _, config := range configs {
-				ri, err := models.NewRunningInput(name, config, registry)
-				if err != nil {
-					// what do
-					return err
-				}
-				ris = append(ris, ri)
-
-				fmt.Printf(FormatPlugin(ri))
-			}
+		for _, input := range pipeline.Inputs {
+			fmt.Printf(FormatPlugin(input))
 		}
-		for name, configs := range conf.Outputs {
-			for _, config := range configs {
-				ro, err := models.NewRunningOutput(name, config, registry)
-				if err != nil {
-					// what do
-				}
-				ros = append(ros, ro)
-
-				fmt.Printf(FormatPlugin(ro))
-			}
+		for _, output := range pipeline.Outputs {
+			fmt.Printf(FormatPlugin(output))
 		}
-
-		for name, configs := range conf.Loaders {
-			var conf *telegraf.Config
-			for _, config := range configs {
-				rl, err := models.NewRunningLoader(name, config, registry)
-				if err != nil {
-					// what do
-				}
-				rls = append(rls, rl)
-
-				watcher.WatchLoader(ctx, rl)
-
-				conf, err = rl.Load(ctx, configr)
-				if err != nil {
-					return err
-				}
-
-				fmt.Printf(FormatPlugin(rl))
-			}
-
-			for name, configs := range conf.Inputs {
-				for _, config := range configs {
-					ri, err := models.NewRunningInput(name, config, registry)
-					if err != nil {
-						// what do
-						return err
-					}
-					ris = append(ris, ri)
-
-					fmt.Printf(FormatPlugin(ri))
-				}
-			}
-			for name, configs := range conf.Outputs {
-				for _, config := range configs {
-					ro, err := models.NewRunningOutput(name, config, registry)
-					if err != nil {
-						// what do
-					}
-					ros = append(ros, ro)
-
-					fmt.Printf(FormatPlugin(ro))
-				}
-			}
+		for _, loader := range pipeline.Loaders {
+			fmt.Printf(FormatPlugin(loader))
 		}
 
 		// !! Start Pipeline
 		// Wait for Watch to complete
 		watcher.Wait()
+		fmt.Println("Watch Triggered")
 		// !! Stop Pipeline
 
 		if ctx.Err() == context.Canceled {
 			fmt.Println("cancelled: agent")
-			break
 		}
 		if ctx.Err() == context.DeadlineExceeded {
 			fmt.Println("finished timed run: agent")
-			break
 		}
-
-		fmt.Println("reloading")
 	}
 
 	fmt.Println("Run -- finished")
@@ -231,20 +198,100 @@ func (a *Agent) Run() error {
 	return nil
 }
 
-type Watcher struct {
+func (a *Agent) LoadPipeline(ctx context.Context, watcher *watcher) (*Pipeline, error) {
+	var pipeline = NewPipeline()
+
+	configreg := a.registry.GetConfigRegistry()
+
+	// Place a watch on the main loader before loading, ensuring that we don't
+	// miss any updates.
+	watcher.WatchLoader(ctx, a.mainLoader)
+
+	fmt.Printf("Loading: %s\n", a.mainLoader.Name)
+	conf, err := a.mainLoader.Load(ctx, configreg)
+	if err != nil {
+		return nil, err
+	}
+	pipeline.AddLoaders(a.mainLoader)
+
+	for name, configs := range conf.Inputs {
+		for _, config := range configs {
+			inputs, err := models.NewRunningInputs(name, config, a.registry)
+			if err != nil {
+				return nil, err
+			}
+			pipeline.AddInputs(inputs...)
+		}
+	}
+
+	for name, configs := range conf.Outputs {
+		for _, config := range configs {
+			outputs, err := models.NewRunningOutputs(name, config, a.registry)
+			if err != nil {
+				return nil, err
+			}
+			pipeline.AddOutputs(outputs...)
+		}
+	}
+
+	for name, configs := range conf.Loaders {
+		var conf *telegraf.Config
+		for _, config := range configs {
+			loaders, err := models.NewRunningLoaders(name, config, a.registry)
+			if err != nil {
+				return nil, err
+			}
+			pipeline.AddLoaders(loaders...)
+
+			for _, loader := range loaders {
+				watcher.WatchLoader(ctx, loader)
+
+				fmt.Printf("Loading: %s\n", name)
+				conf, err = loader.Load(ctx, configreg)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+
+		for name, configs := range conf.Inputs {
+			for _, config := range configs {
+				inputs, err := models.NewRunningInputs(name, config, a.registry)
+				if err != nil {
+					return nil, err
+				}
+				pipeline.AddInputs(inputs...)
+			}
+		}
+
+		for name, configs := range conf.Outputs {
+			for _, config := range configs {
+				outputs, err := models.NewRunningOutputs(name, config, a.registry)
+				if err != nil {
+					return nil, err
+				}
+				pipeline.AddOutputs(outputs...)
+			}
+		}
+	}
+
+	return pipeline, nil
+}
+
+type watcher struct {
 	wg      sync.WaitGroup
 	cancels []context.CancelFunc
 	done    chan struct{}
 	once    sync.Once
 }
 
-func newWatcher() *Watcher {
-	return &Watcher{
+func NewWatcher() *watcher {
+	return &watcher{
 		done: make(chan struct{}),
 	}
 }
 
-func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader) error {
+func (m *watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader) error {
 	ctx, cancel := context.WithCancel(ctx)
 	m.cancels = append(m.cancels, cancel)
 
@@ -258,27 +305,28 @@ func (m *Watcher) WatchLoader(ctx context.Context, loader *models.RunningLoader)
 		defer m.wg.Done()
 		err := waiter.Wait()
 
+		var name = loader.Name
+
 		if ctx.Err() == context.Canceled {
-			fmt.Printf("cancelled: %T\n", loader)
+			fmt.Printf("cancelled: %s\n", name)
 		} else if ctx.Err() == context.DeadlineExceeded {
-			fmt.Printf("timeout: %T\n", loader)
+			fmt.Printf("timeout: %s\n", name)
 		} else if err != nil {
-			fmt.Printf("%s: %T\n", err, loader)
+			fmt.Printf("%v: %s\n", err, name)
 		} else {
-			fmt.Printf("monitor completed without error: %T\n", loader)
+			fmt.Printf("monitor completed without error: %s\n", name)
 		}
 		m.once.Do(func() { close(m.done) })
 	}()
 	return nil
 }
 
-func (m *Watcher) Wait() error {
+func (m *watcher) Wait() error {
 	select {
 	case <-m.done:
 		for _, cancel := range m.cancels {
 			cancel()
 		}
-
 	}
 
 	m.wg.Wait()
@@ -287,22 +335,37 @@ func (m *Watcher) Wait() error {
 
 // Restart triggers a plugin reload
 func (a *Agent) Reload() error {
-	// Pause Inputs
-	// Flush Outputs
-	// Run Inputs acks
-	// Clear all inputs, processors, aggregators, outputs
-	// Do all that but also keep buffers
-	// Reload config and start
 	return nil
+
+	// Alternative way:
+	// load_new_configs()
+	// if error:
+	//    # note: includes errors on New
+	//    print error and abandon reload
+	//
+	// try connect new outputs
+	// if error:
+	//    print error and abandon reload
+	//
+	// swap_runtime_state()
+	// pause_inputs() # doesn't exist today -- future ack work
+	//
+	// async start new inputs()
+	//
+	// flush_aggregators()
+	// flush_processors()
+	// flush_outputs()
+	// run_input_acks() # doesn't exist today -- future ack work
+	// delete_old_runtime_state()
+
+	// Needs plenty of thought about what we do when the config cannot be
+	// loaded.
+
+	// Remain cancellable...
 }
 
 // Shutdown stops the Agent
 func (a *Agent) Shutdown() {
-	// Pause Inputs
-	// Flush Outputs
-	// Run Inputs acks
-	// Clear all inputs, processors, aggregators, outputs
-	// Stop
 }
 
 func FormatPlugin(p interface{}) string {
@@ -314,5 +377,4 @@ func FormatPlugin(p interface{}) string {
 		fmt.Println(err)
 	}
 	return b.String()
-
 }

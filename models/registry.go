@@ -7,19 +7,12 @@ import (
 	"github.com/influxdata/tgconfig"
 )
 
-type factories struct {
-	Loaders map[string]telegraf.PluginFactory
-	Inputs  map[string]telegraf.PluginFactory
-	Outputs map[string]telegraf.PluginFactory
-	Parsers map[string]telegraf.PluginFactory
-}
-
-func NewFactories(
+func NewRegistry(
 	loaders map[string]telegraf.PluginFactory,
 	inputs map[string]telegraf.PluginFactory,
 	outputs map[string]telegraf.PluginFactory,
 	parsers map[string]telegraf.PluginFactory,
-) (*factories, error) {
+) (*registry, error) {
 	err := check(loaders)
 	if err != nil {
 		return nil, err
@@ -37,15 +30,17 @@ func NewFactories(
 		return nil, err
 	}
 
-	return &factories{
-		Loaders: loaders,
-		Inputs:  inputs,
-		Outputs: outputs,
-		Parsers: parsers,
-	}, nil
+	registry := &registry{
+		loaders: loaders,
+		inputs:  inputs,
+		outputs: outputs,
+		parsers: parsers,
+	}
+
+	return registry, nil
 }
 
-func (c *factories) GetFactory(
+func (c *registry) GetFactory(
 	pluginType telegraf.PluginType,
 	name string,
 ) (telegraf.PluginFactory, bool) {
@@ -54,32 +49,28 @@ func (c *factories) GetFactory(
 
 	switch pluginType {
 	case telegraf.LoaderType:
-		factory, ok = c.Loaders[name]
+		factory, ok = c.loaders[name]
 	case telegraf.InputType:
-		factory, ok = c.Inputs[name]
+		factory, ok = c.inputs[name]
 	case telegraf.OutputType:
-		factory, ok = c.Outputs[name]
+		factory, ok = c.outputs[name]
 	case telegraf.ParserType:
-		factory, ok = c.Parsers[name]
+		factory, ok = c.parsers[name]
 	}
 
 	return factory, ok
 }
 
-func (c *factories) GetConfigRegistry() telegraf.ConfigRegistry {
+func (c *registry) GetConfigRegistry() telegraf.ConfigRegistry {
+	// cycle...
 	return &configs{*c}
-}
-
-// Configs provides access to plugins config structure by type and name.
-type configs struct {
-	factories factories
 }
 
 func (c *configs) GetPluginConfig(
 	pluginType telegraf.PluginType,
 	name string,
 ) (telegraf.PluginConfig, bool) {
-	factory, ok := c.factories.GetFactory(pluginType, name)
+	factory, ok := c.registry.GetFactory(pluginType, name)
 	if !ok {
 		return nil, false
 	}
@@ -93,101 +84,71 @@ func (c *configs) GetPluginConfig(
 	return reflect.New(configType.Elem()).Interface(), true
 }
 
-// check validates the Plugin factories
-func check(plugins map[string]telegraf.PluginFactory) error {
-	for name, factory := range plugins {
-		f := reflect.ValueOf(factory)
-		if f.Kind() != reflect.Func {
-			return fmt.Errorf("invalid factory %s", name)
-		}
-
-		if f.Type().NumIn() != 1 {
-			return fmt.Errorf("invalid arguments %s", name)
-		}
-
-		c := f.Type().In(0)
-		if c.Kind() != reflect.Ptr {
-			return fmt.Errorf("invalid argument type %s", name)
-		}
-
-		// TODO: Check return values: (pluginType, error)
-	}
-	return nil
-}
-
-func (c *factories) CreateInput(
-	pluginType telegraf.PluginType,
+func (c *registry) CreateInputs(
 	name string,
 	config telegraf.PluginConfig,
-) (telegraf.Input, error) {
-	plugin, err := c.createPlugin(pluginType, name, config)
+) ([]telegraf.Input, error) {
+	plugins, err := c.createPlugins(telegraf.InputType, name, config)
 	if err != nil {
 		return nil, err
 	}
 
-	switch plugin := plugin.(type) {
-	case telegraf.Input:
-		return plugin, nil
-	default:
-		panic("input not created")
-	}
+	inputs := plugins.([]telegraf.Input)
+	return inputs, nil
 }
 
-func (c *factories) CreateParser(
-	pluginType telegraf.PluginType,
+func (c *registry) CreateParser(
 	name string,
 	config telegraf.PluginConfig,
 ) (telegraf.Parser, error) {
-	plugin, err := c.createPlugin(pluginType, name, config)
+	plugins, err := c.createPlugins(telegraf.ParserType, name, config)
 	if err != nil {
 		return nil, err
 	}
 
-	switch plugin := plugin.(type) {
-	case telegraf.Parser:
-		return plugin, nil
-	default:
-		panic("parser not created")
-	}
+	parser := plugins.(telegraf.Parser)
+	return parser, nil
 }
 
-func (c *factories) CreateOutput(
-	pluginType telegraf.PluginType,
+func (c *registry) CreateOutputs(
 	name string,
 	config telegraf.PluginConfig,
-) (telegraf.Output, error) {
-	plugin, err := c.createPlugin(pluginType, name, config)
+) ([]telegraf.Output, error) {
+	plugins, err := c.createPlugins(telegraf.OutputType, name, config)
 	if err != nil {
 		return nil, err
 	}
 
-	switch plugin := plugin.(type) {
-	case telegraf.Output:
-		return plugin, nil
-	default:
-		panic("output not created")
-	}
+	outputs := plugins.([]telegraf.Output)
+	return outputs, nil
 }
 
-func (c *factories) CreateLoader(
-	pluginType telegraf.PluginType,
+func (c *registry) CreateLoaders(
 	name string,
 	config telegraf.PluginConfig,
-) (telegraf.Loader, error) {
-	plugin, err := c.createPlugin(pluginType, name, config)
+) ([]telegraf.Loader, error) {
+	plugins, err := c.createPlugins(telegraf.LoaderType, name, config)
 	if err != nil {
 		return nil, err
 	}
 
-	switch plugin := plugin.(type) {
-	case telegraf.Loader:
-		return plugin, nil
-	default:
-		panic("loader not created")
-	}
+	loaders := plugins.([]telegraf.Loader)
+	return loaders, nil
 }
 
-func (c *factories) createPlugin(
+type registry struct {
+	loaders map[string]telegraf.PluginFactory
+	inputs  map[string]telegraf.PluginFactory
+	outputs map[string]telegraf.PluginFactory
+	parsers map[string]telegraf.PluginFactory
+}
+
+// configs provides access to plugins config structure by type and name.
+type configs struct {
+	registry registry
+}
+
+func (c *registry) createPlugins(
 	pluginType telegraf.PluginType,
 	name string,
 	config telegraf.PluginConfig,
@@ -197,13 +158,13 @@ func (c *factories) createPlugin(
 
 	switch pluginType {
 	case telegraf.LoaderType:
-		factory, ok = c.Loaders[name]
+		factory, ok = c.loaders[name]
 	case telegraf.InputType:
-		factory, ok = c.Inputs[name]
+		factory, ok = c.inputs[name]
 	case telegraf.OutputType:
-		factory, ok = c.Outputs[name]
+		factory, ok = c.outputs[name]
 	case telegraf.ParserType:
-		factory, ok = c.Parsers[name]
+		factory, ok = c.parsers[name]
 	}
 	if !ok {
 		return nil, fmt.Errorf("unknown plugin %s", name)
@@ -219,11 +180,37 @@ func (c *factories) createPlugin(
 		panic("incorrect number of return values")
 	}
 
-	plugin := result[0].Interface()
+	plugins := result[0].Interface()
 	switch err := result[1].Interface().(type) {
 	case error:
 		return nil, err
 	default:
-		return plugin, nil
+		return plugins, nil
 	}
+}
+
+// check validates the Plugin factories
+func check(plugins map[string]telegraf.PluginFactory) error {
+	for name, factory := range plugins {
+		f := reflect.ValueOf(factory)
+
+		// Check factory is a function
+		if f.Kind() != reflect.Func {
+			return fmt.Errorf("invalid factory %s", name)
+		}
+
+		// Check factory has one argument
+		if f.Type().NumIn() != 1 {
+			return fmt.Errorf("invalid arguments %s", name)
+		}
+
+		// Check argument is a ptr
+		c := f.Type().In(0)
+		if c.Kind() != reflect.Ptr {
+			return fmt.Errorf("invalid argument type %s", name)
+		}
+
+		// TODO: Check return values: (pluginType, error)?
+	}
+	return nil
 }

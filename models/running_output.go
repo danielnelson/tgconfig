@@ -14,16 +14,19 @@ type RunningOutput struct {
 	Output telegraf.Output
 }
 
-func NewRunningOutput(
+func NewRunningOutputs(
 	name string,
 	config *telegraf.OutputConfig,
-	registry telegraf.FactoryRegistry,
-) (*RunningOutput, error) {
-	output, err := registry.CreateOutput(
-		telegraf.OutputType, name, config.PluginConfig)
+	registry telegraf.Registry,
+) ([]*RunningOutput, error) {
+	outputs, err := registry.CreateOutputs(name, config.PluginConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	return &RunningOutput{config.Config, output}, nil
+	r := make([]*RunningOutput, len(outputs))
+	for i, output := range outputs {
+		r[i] = &RunningOutput{config.Config, output}
+	}
+	return r, nil
 }

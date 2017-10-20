@@ -16,6 +16,6 @@ func (i *Influx) Parse(buf []byte) ([]telegraf.Metric, error) {
 	return []telegraf.Metric{}, nil
 }
 
-func New(config *Config) (*Influx, error) {
+func New(config *Config) (telegraf.Parser, error) {
 	return &Influx{}, nil
 }

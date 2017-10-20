@@ -24,6 +24,6 @@ func (p *Example) Connect() error {
 }
 
 // NewExampleOutput creates an ExampleOutput from an ExampleOutputConfig.
-func New(config *Config) (telegraf.Output, error) {
-	return &Example{*config}, nil
+func New(config *Config) ([]telegraf.Output, error) {
+	return []telegraf.Output{&Example{*config}}, nil
 }

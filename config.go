@@ -47,20 +47,20 @@ type PluginConfig = interface{}
 // PluginFactory function for creating plugins: func (*PluginConfig) (Plugin, error)
 type PluginFactory = interface{}
 
-// InputConfig is all configuration needed to create an Input.
+// InputConfig is all configuration needed to create the Inputs.
 type InputConfig struct {
 	Config       *CommonInputConfig
 	PluginConfig PluginConfig
 	ParserConfig PluginConfig
 }
 
-// OutputConfig is all configuration needed to create an Output.
+// OutputConfig is all configuration needed to create the Outputs.
 type OutputConfig struct {
 	Config       *CommonOutputConfig
 	PluginConfig PluginConfig
 }
 
-// LoaderConfig is all configuration needed to create an Loader.
+// LoaderConfig is all configuration needed to create the Loaders.
 type LoaderConfig struct {
 	Config       *CommonLoaderConfig
 	PluginConfig PluginConfig
@@ -74,12 +74,13 @@ type Config struct {
 	Loaders map[string][]*LoaderConfig
 }
 
-// FactoryRegistry is an interface that can create plugins or config structs.
-type FactoryRegistry interface {
-	CreateInput(pt PluginType, name string, c PluginConfig) (Input, error)
-	CreateOutput(pt PluginType, name string, c PluginConfig) (Output, error)
-	CreateParser(pt PluginType, name string, c PluginConfig) (Parser, error)
-	CreateLoader(pt PluginType, name string, c PluginConfig) (Loader, error)
+// Registry is an interface for creating known plugins.
+type Registry interface {
+	CreateInputs(name string, c PluginConfig) ([]Input, error)
+	CreateOutputs(name string, c PluginConfig) ([]Output, error)
+	CreateLoaders(name string, c PluginConfig) ([]Loader, error)
+
+	CreateParser(name string, c PluginConfig) (Parser, error)
 
 	GetConfigRegistry() ConfigRegistry
 }
