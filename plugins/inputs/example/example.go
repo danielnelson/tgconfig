@@ -2,10 +2,7 @@ package example
 
 import (
 	telegraf "github.com/influxdata/tgconfig"
-)
-
-const (
-	Name = "example"
+	"github.com/influxdata/tgconfig/plugins/inputs"
 )
 
 // Config contains configuration for ExampleInput.  It's structure
@@ -32,4 +29,8 @@ func (p *Example) Gather() error {
 
 func (p *Example) SetParser(parser telegraf.Parser) {
 	p.parser = parser
+}
+
+func init() {
+	inputs.Add("example", New)
 }

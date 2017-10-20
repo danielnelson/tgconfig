@@ -68,13 +68,6 @@ func (p *parser) Parse(reader io.Reader) (*telegraf.Config, error) {
 func (p *parser) loadInputs(inputs map[string][]toml.Primitive) (map[string][]*telegraf.InputConfig, error) {
 	inputConfigs := make(map[string][]*telegraf.InputConfig)
 
-	// Function on Registry?
-	// Don't call this loader anymore
-	// factories, err := models.Check(p.registry.Inputs)
-	// if err != nil {
-	// 	return nil, err
-	// }
-
 	for name, primitives := range inputs {
 		configs := make([]*telegraf.InputConfig, 0)
 		for _, primitive := range primitives {

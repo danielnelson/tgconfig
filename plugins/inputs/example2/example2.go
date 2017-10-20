@@ -2,10 +2,7 @@ package example2
 
 import (
 	telegraf "github.com/influxdata/tgconfig"
-)
-
-const (
-	Name = "example2"
+	"github.com/influxdata/tgconfig/plugins/inputs"
 )
 
 // Config contains configuration for Example2.  It's structure
@@ -26,4 +23,8 @@ func New(config *Config) (telegraf.Input, error) {
 
 func (p *Example2) Gather() error {
 	return nil
+}
+
+func init() {
+	inputs.Add("example2", New)
 }

@@ -6,6 +6,9 @@ import (
 	"os"
 
 	"github.com/influxdata/tgconfig/agent"
+
+	// init inputs
+	_ "github.com/influxdata/tgconfig/plugins/inputs/all"
 )
 
 var fDebug = flag.Bool("debug", false, "turn on debug logging")
